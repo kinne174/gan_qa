@@ -1,0 +1,337 @@
+import numpy as np
+from utils_embedding_model import ArcFeature
+import torch
+import torch.nn as nn
+from transformers import (BertForMaskedLM, DistilBertForMaskedLM, RobertaForMaskedLM,
+                          BertConfig, DistilBertConfig, RobertaConfig)
+from transformers import PretrainedConfig
+from torch.nn import functional as F
+import logging
+from tqdm import trange
+
+logger = logging.getLogger(__name__)
+
+
+# from https://github.com/bentrevett/pytorch-seq2seq/blob/master/1%20-%20Sequence%20to%20Sequence%20Learning%20with%20Neural%20Networks.ipynb
+class Encoder(nn.Module):
+    def __init__(self, input_dim, emb_dim, hid_dim, n_layers, dropout):
+        super().__init__()
+
+        self.hid_dim = hid_dim
+        self.n_layers = n_layers
+
+        self.embedding = nn.Embedding(input_dim, emb_dim)
+
+        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=dropout)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, src):
+        # src = [src len, batch size]
+
+        embedded = self.dropout(self.embedding(src))
+
+        # embedded = [src len, batch size, emb dim]
+
+        outputs, (hidden, cell) = self.rnn(embedded)
+
+        # outputs = [src len, batch size, hid dim * n directions]
+        # hidden = [n layers * n directions, batch size, hid dim]
+        # cell = [n layers * n directions, batch size, hid dim]
+
+        # outputs are always from the top hidden layer
+
+        return hidden, cell
+
+
+class Decoder(nn.Module):
+    def __init__(self, output_dim, emb_dim, hid_dim, n_layers, dropout):
+        super().__init__()
+
+        self.output_dim = output_dim
+        self.hid_dim = hid_dim
+        self.n_layers = n_layers
+
+        self.embedding = nn.Embedding(output_dim, emb_dim)
+
+        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=dropout)
+
+        self.fc_out = nn.Linear(hid_dim, output_dim)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, input, hidden, cell):
+        # input = [batch size]
+        # hidden = [n layers * n directions, batch size, hid dim]
+        # cell = [n layers * n directions, batch size, hid dim]
+
+        # n directions in the decoder will both always be 1, therefore:
+        # hidden = [n layers, batch size, hid dim]
+        # context = [n layers, batch size, hid dim]
+
+        input = input.unsqueeze(0)
+
+        # input = [1, batch size]
+
+        embedded = self.dropout(self.embedding(input))
+
+        # embedded = [1, batch size, emb dim]
+
+        output, (hidden, cell) = self.rnn(embedded, (hidden, cell))
+
+        # output = [seq len, batch size, hid dim * n directions]
+        # hidden = [n layers * n directions, batch size, hid dim]
+        # cell = [n layers * n directions, batch size, hid dim]
+
+        # seq len and n directions will always be 1 in the decoder, therefore:
+        # output = [1, batch size, hid dim]
+        # hidden = [n layers, batch size, hid dim]
+        # cell = [n layers, batch size, hid dim]
+
+        prediction = self.fc_out(output.squeeze(0))
+
+        # prediction = [batch size, output dim]
+
+        return prediction, hidden, cell
+
+# from https://discuss.pytorch.org/t/vae-gumbel-softmax/16838
+def sample_gumbel(shape, eps=1e-20):
+    U = torch.Tensor(shape).uniform_(0, 1)
+    return -(torch.log(-torch.log(U + eps) + eps))
+
+def gumbel_softmax_sample(logits, temperature):
+    y = logits + sample_gumbel(logits.size())
+    return F.softmax(y / temperature, dim=-1)
+
+def gumbel_softmax(logits, temperature=0.5, hard=False):
+    """
+    input: [*, n_class]
+    return: [*, n_class] an one-hot vector
+    """
+    y = gumbel_softmax_sample(logits, temperature)
+    if hard:
+        shape = y.size()
+        _, ind = y.max(dim=-1)
+        y_hard = torch.zeros_like(y).view(-1, shape[-1])
+        y_hard.scatter_(1, ind.view(-1, 1), 1)
+        y_hard = y_hard.view(*shape)
+        y = (y_hard - y).detach() + y
+    return y
+
+class Seq2Seq(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.encoder = config.encoder
+        self.decoder = config.decoder
+        self.device = config.device
+
+        assert self.encoder.hid_dim == self.decoder.hid_dim, \
+            "Hidden dimensions of encoder and decoder must be equal!"
+        assert self.encoder.n_layers == self.decoder.n_layers, \
+            "Encoder and decoder must have equal number of layers!"
+
+        self.criterion = nn.CrossEntropyLoss()
+
+    @classmethod
+    def from_pretrained(cls, config):
+        return cls(config)
+
+    def forward(self, input_ids, my_attention_mask, **kwargs):
+
+        input_ids = torch.t(input_ids.view(-1, input_ids.shape[-1]))  # [max len, batch size]
+        temp_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])  # [batch size, max len]
+
+        batch_size = input_ids.shape[1]  # this should be 4*batch size
+        max_len = input_ids.shape[0]  # this should be max length
+        out_len = max(torch.sum(temp_attention_mask, dim=1)) # number of maximum masked tokens
+        vocab_size = self.decoder.output_dim  # this should be the number of possible vocab words
+
+        # tensor to store decoder outputs [max attention masks, batch size, vocab size]
+        outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
+
+        # last hidden state of the encoder is used as the initial hidden state of the decoder
+        hidden, cell = self.encoder(input_ids)
+
+        # first input to the decoder is the <sos> tokens
+        input = input_ids[0, :]
+
+        # for t in trange(1, max_len):
+        for t in range(1, max_len):
+            # insert input token embedding, previous hidden and previous cell states
+            # receive output tensor (predictions) and new hidden and cell states
+            output, hidden, cell = self.decoder(input, hidden, cell)  # output is [4*batch size, vocab size]
+
+            # place predictions in a tensor holding predictions for each token
+            # outputs = torch.tensor([[[outputs[i, j, :] if temp_attention_mask[j, t] == 0 else output[j, :]]]])
+            for j in range(batch_size):
+                if temp_attention_mask[j, t] == 0:
+                    continue
+                else:
+                    i = torch.sum(temp_attention_mask[j, :t])
+                    outputs[i, j, :] = output[j, :]
+
+            # decide if we are going to use teacher forcing or not
+            # teacher_force = random.random() < teacher_forcing_ratio
+
+            # get the highest predicted token from our predictions
+            top1 = output.argmax(1)
+
+            # if teacher forcing, use actual next token as next input
+            # if not, use predicted token
+            input = input_ids[t, :]
+
+        # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
+        gs = gumbel_softmax(outputs, hard=True)
+
+        # should give dimension [max attention masks, 4*batch size, vocab size] with 0,1,2...,vocab size along the third dimension
+        input_indicators = torch.arange(0, gs.shape[2]).expand_as(gs)
+
+        # should give dimension [max attention masks, 4*batch size] with prediction of word token
+        summed = torch.sum(gs * input_indicators, dim=2, dtype=torch.long)
+        assert torch.max(summed) <= vocab_size
+
+        # gives dimension [max length, batch size] with 0s at non masked tokens and new token at masked tokens
+        new_sentences = torch.zeros(*input_ids.shape, dtype=torch.long)
+        for j in range(batch_size):
+            for k in range(max_len):
+                if temp_attention_mask[j, k] == 0:
+                    continue
+                else:
+                    i = torch.sum(temp_attention_mask[j, :k])
+                    new_sentences[k, j] = summed[i, j]
+
+        # gives dimension [batch size, max length] with 0s at masked tokens and remaining tokens at non masked tokens
+        remaining_sentences = torch.t(input_ids) * (torch.ones(*temp_attention_mask.shape) - temp_attention_mask)
+
+        assert remaining_sentences.shape == torch.t(new_sentences).shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape, *torch.t(new_sentences).shape)
+
+        # adding gives new sentences with replaced tokens [batch size, max length]
+        out = remaining_sentences + torch.t(new_sentences)
+
+        out_dict = {k: v for k,v in kwargs.items()}
+        # reshape input ids to resemble known form
+        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0])).long()
+
+        return out_dict
+
+
+class GeneratorConfig(PretrainedConfig):
+
+    def __init__(self, **kwargs):
+        super(GeneratorConfig, self).__init__()
+
+        if kwargs['pretrained_model_name_or_path'] == 'seq':
+            self.encoder = Encoder(input_dim=kwargs['input_dim'], emb_dim=10, hid_dim=200, n_layers=1, dropout=0.0)
+            self.decoder = Decoder(output_dim=kwargs['input_dim'], emb_dim=10, hid_dim=200, n_layers=1, dropout=0.0)
+
+        for key, value in kwargs.items():
+            try:
+                setattr(self, key, value)
+            except AttributeError as err:
+                logger.error("Can't set {} with value {} for {}".format(key, value, self))
+                raise err
+
+    @classmethod
+    def from_pretrained(cls, **kwargs):
+        # if kwargs['pretrained_model_name_or_path'] == 'linear':
+        #     self.in_features = 100
+        #     self.hidden_features = 200
+        # if kwargs['pretrained_model_name_or_path'] == 'seq':
+        #     self.encoder = Encoder(input_dim=kwargs['input_dim'], emb_dim=100, hid_dim=200, n_layers=1, dropout=0.0)
+        #     self.decoder = Decoder(output_dim=kwargs['input_dim'], emb_dim=100, hid_dim=200, n_layers=1, dropout=0.0)
+        #     self.device = kwargs['device']
+        # else:
+        #     raise Exception('Not implemented yet')
+        return cls(**kwargs)
+
+
+class GeneratorNet(torch.nn.Module):
+    def __init__(self, config):
+        super(GeneratorNet, self).__init__()
+
+        self.in_features = config.in_features
+        self.hidden_features = config.hidden_features
+
+        self.linear = nn.Sequential(
+            nn.Linear(self.in_features, self.hidden_features),
+            nn.BatchNorm1d(self.hidden_features),
+            nn.ReLU(inplace=True)
+        )
+
+        self.out = nn.Sequential(
+            nn.Linear(self.hidden_features, self.in_features),
+            # nn.BatchNorm1d(self.in_features),
+            nn.Tanh()
+        )
+
+    @classmethod
+    def from_pretrained(cls, config):
+        return cls(config)
+
+    def forward(self, input_ids, my_attention_mask, **kwargs):
+        # TODOfixed create a model that changes input_ids based on my_attention_mask and returns the rest unchanged, trying seq2seq
+        x = self.linear(input_ids)
+        x = self.out(x)
+
+        # for now just make integers out of everything, and don't worry about the attention mask
+        # x = torch.round(x)
+
+        return x
+
+
+class MyBertForMaskedLM(BertForMaskedLM):
+    def __init__(self, config):
+        super(MyBertForMaskedLM, self).__init__(config)
+
+
+
+
+def int_list(l):
+    return [int(o) for o in l]
+
+
+def randomize_generator(features, model=None):
+    if model is None:
+        for f in features:
+            assert isinstance(f, ArcFeature)
+
+            cf = f.choices_features
+            for d in cf:
+                # cf is a list of dicts with keys 'input_ids', ..., ..., 'attention_mask'
+                new_input_ids = [ii//2 if am == 1 else ii for ii, am in zip(d['input_ids'], d['attention_mask'])]
+                d['input_ids'] = new_input_ids
+    else:
+        all_input_ids = []
+        for f in features:
+            assert isinstance(f, ArcFeature)
+
+            cf = f.choices_features
+            all_input_ids.extend([d['input_ids'] for d in cf])
+
+        input_ids_tensor = torch.tensor(all_input_ids, dtype=torch.float)
+        output = model(input_ids_tensor)
+
+        output = output.view((len(features), 4, -1))
+
+        for ii, f in enumerate(features):
+            cf = f.choices_features
+            for jj, d in enumerate(cf):
+                d['input_ids'] = int_list(output[ii, jj, :].tolist())
+
+    return features
+
+
+def generator(features, model, randomize=False):
+    if randomize:
+        return randomize_generator(features, model)
+
+
+generator_models_and_config_classes = {
+    'linear': (GeneratorConfig, GeneratorNet),
+    'seq': (GeneratorConfig, Seq2Seq),
+    'bert': (BertConfig, BertForMaskedLM),
+    'roberta': (RobertaConfig, RobertaForMaskedLM),
+    'distilbert': (DistilBertConfig, DistilBertForMaskedLM),
+}
+
