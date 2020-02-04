@@ -149,6 +149,7 @@ class Seq2Seq(nn.Module):
 
         # tensor to store decoder outputs [max attention masks, batch size, vocab size]
         outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
+        # outputs = torch.rand((max_len, batch_size, vocab_size)).to(self.device)
 
         # last hidden state of the encoder is used as the initial hidden state of the decoder
         hidden, cell = self.encoder(input_ids)
@@ -163,7 +164,7 @@ class Seq2Seq(nn.Module):
             output, hidden, cell = self.decoder(input, hidden, cell)  # output is [4*batch size, vocab size]
 
             # place predictions in a tensor holding predictions for each token
-            # outputs = torch.tensor([[[outputs[i, j, :] if temp_attention_mask[j, t] == 0 else output[j, :]]]])
+            # outputs[t] = output
             for j in range(batch_size):
                 if temp_attention_mask[j, t] == 0:
                     continue
@@ -188,11 +189,11 @@ class Seq2Seq(nn.Module):
         input_indicators = torch.arange(0, gs.shape[2]).expand_as(gs)
 
         # should give dimension [max attention masks, 4*batch size] with prediction of word token
-        summed = torch.sum(gs * input_indicators, dim=2, dtype=torch.long)
+        summed = torch.sum(gs * input_indicators, dim=2)
         assert torch.max(summed) <= vocab_size
 
         # gives dimension [max length, batch size] with 0s at non masked tokens and new token at masked tokens
-        new_sentences = torch.zeros(*input_ids.shape, dtype=torch.long)
+        new_sentences = torch.zeros(*input_ids.shape)
         for j in range(batch_size):
             for k in range(max_len):
                 if temp_attention_mask[j, k] == 0:
@@ -200,6 +201,7 @@ class Seq2Seq(nn.Module):
                 else:
                     i = torch.sum(temp_attention_mask[j, :k])
                     new_sentences[k, j] = summed[i, j]
+        # new_sentences = summed*torch.t(temp_attention_mask)
 
         # gives dimension [batch size, max length] with 0s at masked tokens and remaining tokens at non masked tokens
         remaining_sentences = torch.t(input_ids) * (torch.ones(*temp_attention_mask.shape) - temp_attention_mask)
@@ -211,7 +213,7 @@ class Seq2Seq(nn.Module):
 
         out_dict = {k: v for k,v in kwargs.items()}
         # reshape input ids to resemble known form
-        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0])).long()
+        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0]))
 
         return out_dict
 
@@ -222,8 +224,8 @@ class GeneratorConfig(PretrainedConfig):
         super(GeneratorConfig, self).__init__()
 
         if kwargs['pretrained_model_name_or_path'] == 'seq':
-            self.encoder = Encoder(input_dim=kwargs['input_dim'], emb_dim=10, hid_dim=200, n_layers=1, dropout=0.0)
-            self.decoder = Decoder(output_dim=kwargs['input_dim'], emb_dim=10, hid_dim=200, n_layers=1, dropout=0.0)
+            self.encoder = Encoder(input_dim=kwargs['input_dim'], emb_dim=5, hid_dim=200, n_layers=1, dropout=0.0)
+            self.decoder = Decoder(output_dim=kwargs['input_dim'], emb_dim=5, hid_dim=200, n_layers=1, dropout=0.0)
 
         for key, value in kwargs.items():
             try:
@@ -280,9 +282,13 @@ class GeneratorNet(torch.nn.Module):
         return x
 
 
-class MyBertForMaskedLM(BertForMaskedLM):
+class MyBertForMaskedLM(nn.Module):
     def __init__(self, config):
-        super(MyBertForMaskedLM, self).__init__(config)
+        self.model = super(MyBertForMaskedLM, self).__init__()
+
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None, inputs_embeds=None,
+                masked_lm_labels=None, encoder_hidden_states=None, encoder_attention_mask=None, lm_labels=None, ):
+        outputs = self.model()
 
 
 

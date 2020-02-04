@@ -54,7 +54,7 @@ class ClassifierNet(torch.nn.Module):
 
     def forward(self, input_ids, token_type_ids, attention_mask, labels, **kwargs):
         # TODOfixed create a model that outputs the predictions and the error/loss
-        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+        temp_input_ids = input_ids.view(-1, input_ids.shape[-1]).float()
         x = self.linear(temp_input_ids)
         x = self.out(x)
 

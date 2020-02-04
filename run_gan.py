@@ -38,11 +38,13 @@ TOKENIZER_CLASSES = {
     'distilbert': DistilBertTokenizer,
 }
 
+
 def set_seed(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     # if args.n_gpu > 0:
     #     torch.cuda.manual_seed_all(args.seed)
+
 
 # generally setting up the models with initial weights
 def init_weights(m):
@@ -62,6 +64,15 @@ def select_field(features, field):
     ]
 
 
+def detach_inputs(fake_inputs, inputs):
+    assert 'input_ids' in fake_inputs and 'input_ids' in inputs
+
+    fake_inputs['input_ids'] = fake_inputs['input_ids'].detach()
+    inputs['input_ids'] = inputs['input_ids'].detach()
+
+    return fake_inputs, inputs
+
+
 # return if there is a gpu available
 def get_device():
     if torch.cuda.is_available():
@@ -79,7 +90,6 @@ def label_map(labels, num_choices):
         return l
 
     answers = [label_list(0, 1, lab, num_choices) for lab in labels]
-    # answers = torch.tensor(answers, dtype=torch.float)
     return answers
 
 def load_and_cache_features(args, tokenizer, subset):
@@ -96,7 +106,6 @@ def load_and_cache_features(args, tokenizer, subset):
         assert save_features(features, cached_features_filename) == -1
 
     # Convert to Tensors and build dataset
-    # TODO problem seems to be that autograd cannot handle torch.long but needed for nn.Embeddings
     all_input_ids = torch.tensor(select_field(features, 'input_ids'), dtype=torch.long)
     all_input_mask = torch.tensor(select_field(features, 'input_mask'), dtype=torch.long)
     all_token_type_mask = torch.tensor(select_field(features, 'token_type_mask'), dtype=torch.long)
@@ -175,6 +184,8 @@ def main():
                         help='Overwrite the output directory')
     parser.add_argument('--overwrite_cache_dir', action='store_true',
                         help='Overwrite the cached models directory')
+    parser.add_argument('--save_steps', type=int, default=20,
+                        help='Save the models every this many steps')
     parser.add_argument('--seed', default=1234, type=int,
                         help='Random seed for reproducibility')
 
@@ -213,29 +224,13 @@ def main():
                 self.max_length = 512
                 self.batch_size = 5
                 self.do_lower_case = True
+                self.save_steps = 20
 
 
         args = Args()
 
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and not args.overwrite_output_dir:
         raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
-
-    # load in parameters using something like arg parse, for now just set them
-    # epochs = 3
-    # randomize = False
-    # cutoff = 50
-    # generator_name = 'linear'
-    # attention_name = 'linear'
-    # classifier_name = 'linear'
-    # learning_rateC = 1e-4
-    # epsilonC = 1e-7
-    # learning_rateG = 1e-2
-    # epsilonG = 1e-5
-    # data_dir = '../ARC/ARC-with-context/'
-    # output_dir = 'output/'
-    # tokenizer_name = 'bert-base-uncased'
-    # transformer_model_name = 'bert'
-    # do_lower_case = True
 
     # Set seed
     set_seed(args)
@@ -250,9 +245,6 @@ def main():
     train_sampler = RandomSampler(dataset, replacement=False)
     train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size)
 
-    # TODOfixed this should be a dataloader from pytorch instead, has been replaced
-    # batch_size = len(examples)//iterations
-
     # get whether running on cpu or gpu
     device = get_device() if args.use_gpu else torch.device('cpu')
 
@@ -263,12 +255,6 @@ def main():
                         level=logging.INFO,
                         filename='logging/logging_{}'.format(num_logging_files))
     logger.info('Using device '.format(device))
-
-
-    # plan right now is to do similar to https://github.com/diegoalejogm/gans/blob/master/2.%20DC-GAN%20PyTorch-MNIST.ipynb
-    # and define the models and optimizers in main before training based on models found in the utils_* files
-    # then just define my models in the utils_* and do all the data preparation functions there too
-    # TODO one isssue with this is I need to code up how to handle non pytorch models since they won't work with optimizer/loss functionality
 
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
@@ -328,11 +314,9 @@ def main():
     # classifierM = classifier_models[classifier_name](config)  # input features, num choices
 
     # apply initial weights
-    # generatorM.apply(init_weights)
+    generatorM.apply(init_weights)
     # attentionM.apply(init_weights)
     classifierM.apply(init_weights)
-
-    # print(generatorM)
 
     # move to proper device based on if gpu is available
     generatorM.to(device)
@@ -351,14 +335,9 @@ def main():
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
-    for e, _ in enumerate(train_iterator):
+    for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
-        for i, batch in enumerate(epoch_iterator):
-            # TODOfixed is there a better way to handle which examples are to be taken as fake and which are to be taken as real?
-            # current_examples = examples[batch_size*i:batch_size*(i+1)]
-            #
-            # real_examples = current_examples[:batch_size//2]
-            # fake_examples = current_examples[batch_size//2:]
+        for iterate, batch in enumerate(epoch_iterator):
 
             batch = tuple(t.to(device) for t in batch)
             inputs = {'input_ids': batch[0],
@@ -366,66 +345,39 @@ def main():
                       'token_type_ids': batch[2],
                       'my_attention_mask': batch[3],
                       'labels': batch[4],
-                      'device': device,
                       }
 
             # Train generator
             generatorM.train()
             # attentionM.train()
 
-            # from examples convert to input ids to be run in the neural networks, this changes from words to integers
-            # next is to put the inputids into the attention network
-            # fake_inputids, fake_features = feature_loader(fake_examples, randomize=randomize)
-
-            # this changes the 'my_attention_masks' input
+            # this changes the 'my_attention_masks' input to highlight which words should be changed
             fake_inputs = attentionM(**inputs)
 
-            # TODOfixed this should be like an attention thing in a network, not fully sure how to implement it right now though
-            # fake_inputids = fake_inputids*attention_masks
-
-            # TODOfixed update context attention masks in fake_features within inputs
-            # fake_features = attention_loader(fake_features, attention_masks)
-
-            # this changes the 'input_ids' based on the 'my_attention_mask' input
-            # TODOfixed generator should receive as input the context attention masks too
+            # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
             fake_inputs = generatorM(**fake_inputs)
-            # TODOfixed changed_inputids is all zero, probably not right, for some reason batchnorm did it, hopefully
-            # this isn't a problem when moving to huggingface transformers
 
-            criterion = nn.MSELoss(reduction='mean')
-            loss = criterion(fake_inputs['input_ids'].float(), inputs['input_ids'].float())
-            loss.backward()
-            print('generator model')
-            print(list(generatorM.parameters())[0].grad)
-            print(torch.max(list(generatorM.parameters())[0].grad))
-            generatorO.step()
-
-            # create labeling based on changing the correct answer to wrong in eyes of the classifier, classifier should
-            # be able to determine which questing ending pair is incorrect
-            # fake_labels = label_map([ff.label for ff in fake_features], fake=True, num_choices=4)
-
-            # TODOfixed incorporate changed_inputids into the inputs variable
-
-            # TODOfixed labels need to be flipped here
+            # flip labels to represent the wrong answers are actually right
             fake_inputs = flip_labels(**fake_inputs)
+
             # get the predictions of which answers are the correct pairing from the classifier
             predictions, errorG = classifierM(**fake_inputs)
 
             # based on the loss function update the parameters within the generator/ attention model
-            # TODOfixed should also be the attention model but right now just the generator
-            # errorG = loss(predictions, fake_labels)
             errorG.backward()
 
             # print('attention model')
             # print(list(attentionM.parameters())[0].grad)
             # print(torch.max(list(attentionM.parameters())[0].grad))
             print('generator model')
-            print(list(generatorM.parameters())[0].grad)
-            print(torch.max(list(generatorM.parameters())[0].grad))
-            print('classifier model')
-            print(list(classifierM.parameters())[0].grad)
-            print(torch.max(list(classifierM.parameters())[0].grad))
-            print('*****************************************************************')
+            for i in range(len(list(generatorM.parameters()))):
+                print(i)
+                print(list(generatorM.parameters())[i].grad)
+                # print(torch.max(list(generatorM.parameters())[0].grad))
+            # print('classifier model')
+            # print(list(classifierM.parameters())[0].grad)
+            # print(torch.max(list(classifierM.parameters())[0].grad))
+            # print('*****************************************************************')
 
             # Update generatorM parameters
             generatorO.step()
@@ -433,26 +385,16 @@ def main():
 
             # zero out gradient of networks
             generatorM.zero_grad()
-            attentionM.zero_grad()
+            # attentionM.zero_grad()
             classifierM.zero_grad()
 
             # Train classifier
             classifierM.train()
 
-            # load in the features and inputids from the real examples
-            # real_inputids, real_features = feature_loader(real_examples, randomize=randomize)
+            # detach the inputs so the gradient graphs don't reach back, only need them for classifier
+            fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
 
-            # create the labels
-            # real_labels = label_map([rf.label for rf in real_features], fake=False, num_choices=4)
-
-            # classify the inputs, use the changed inputids from before in hopes of improvement
-            # real_predictions = classifierM(real_inputids)
-            # fake_predictions = classifierM(changed_inputids)
-
-            # find the error from the real predictions and the fake predictions
-            # real_error = loss(real_predictions, real_labels)
-            # fake_error = loss(fake_predictions, fake_labels)
-
+            # see if the classifier can determine difference between fake and real data
             predictions_fake, error_fake = classifierM(**fake_inputs)
             predictions_real, error_real = classifierM(**inputs)
 
@@ -460,12 +402,26 @@ def main():
             error_fake.backward()
             error_real.backward()
 
+            # print('attention model')
+            # print(list(attentionM.parameters())[0].grad)
+            # print(torch.max(list(attentionM.parameters())[0].grad))
+            # print('generator model')
+            # for i in range(len(list(generatorM.parameters()))):
+            #     print(i)
+            #     print(list(generatorM.parameters())[i].grad)
+                # print(torch.max(list(generatorM.parameters())[i].grad))
+            print('classifier model')
+            for i in range(len(list(classifierM.parameters()))):
+                print(list(classifierM.parameters())[i].grad)
+                # print(torch.max(list(classifierM.parameters())[i].grad))
+            print('*****************************************************************')
+
             # update classifier parameters
             classifierO.step()
 
             # zero out gradient of networks
             generatorM.zero_grad()
-            attentionM.zero_grad()
+            # attentionM.zero_grad()
             classifierM.zero_grad()
 
 
@@ -475,14 +431,14 @@ def main():
             # log error for this step
             # TODO write this step to logging file
 
-            if args.evaluate_during_training and (e*args.batch_size + i + 1) % args.evaluate_during_trainig_steps == 0:
-                # TODO write evaluation code and put it here
-                pass
-
             # save models in cache dir
-            if (e*args.batch_size + i + 1) % args.save_steps == 0 and args.save_steps > 0:
+            if (epoch*args.batch_size + iterate + 1) % args.save_steps == 0 and args.save_steps > 0:
                 # TODO save models in cache directory
                 pass
+
+        if args.evaluate_during_training:
+            # TODO write evaluation code and put it here
+            pass
 
         epoch_iterator.close()
 
@@ -496,8 +452,5 @@ def main():
 if __name__ == '__main__':
     main()
 
-# TODOfixed create a psuedo attention network that takes in as input the attention mask and outputs just a few ones from those indices already ones
-# TODOfixed fix classifier part of run_gan code
-# TODOfixed refer to transformers to create a way to load and save models/ config classes
-# TODOfixed create argparse with all necessary options
-# TODO map out how autograd can go from generator to classifier
+# TODO make sure gumbel softmax part is compatible with transformer models
+# TODO one isssue with this is I need to code up how to handle non pytorch models since they won't work with optimizer/loss functionality
