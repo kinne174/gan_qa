@@ -11,21 +11,21 @@ import os
 import argparse
 import numpy as np
 
-from transformers import (BertConfig, BertTokenizer, RobertaConfig, RobertaTokenizer, DistilBertConfig, DistilBertTokenizer)
+from transformers import (BertTokenizer, RobertaTokenizer, DistilBertTokenizer, AlbertTokenizer)
 
 
 if getpass.getuser() == 'Mitch':
     from utils_real_data import example_loader
-    from utils_attention import attention_loader, attention_models
+    from utils_attention import attention_models
     from utils_embedding_model import feature_loader, load_features, save_features
     from utils_classifier import classifier_models_and_config_classes, flip_labels
-    from utils_generator import generator_models_and_config_classes, gumbel_softmax
+    from utils_generator import generator_models_and_config_classes
 else:
     from utils_real_data import example_loader
-    from utils_attention import attention_loader, attention_models
+    from utils_attention import attention_models
     from utils_embedding_model import feature_loader, load_features, save_features
     from utils_classifier import classifier_models_and_config_classes, flip_labels
-    from utils_generator import generator_models_and_config_classes, gumbel_softmax
+    from utils_generator import generator_models_and_config_classes
 
 
 # logging
@@ -36,6 +36,7 @@ TOKENIZER_CLASSES = {
     'bert': BertTokenizer,
     'roberta': RobertaTokenizer,
     'distilbert': DistilBertTokenizer,
+    'albert': AlbertTokenizer,
 }
 
 
@@ -91,6 +92,7 @@ def label_map(labels, num_choices):
 
     answers = [label_list(0, 1, lab, num_choices) for lab in labels]
     return answers
+
 
 def load_and_cache_features(args, tokenizer, subset):
     assert subset in ['train', 'dev', 'test']
@@ -184,8 +186,6 @@ def main():
                         help='Overwrite the output directory')
     parser.add_argument('--overwrite_cache_dir', action='store_true',
                         help='Overwrite the cached models directory')
-    parser.add_argument('--save_steps', type=int, default=20,
-                        help='Save the models every this many steps')
     parser.add_argument('--seed', default=1234, type=int,
                         help='Random seed for reproducibility')
 
@@ -199,8 +199,8 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'bert-base-uncased'
-                self.generator_model_type = 'seq'
-                self.generator_model_name_or_path = None
+                self.generator_model_type = 'albert'
+                self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = None
                 self.attention_model_type = 'linear'
@@ -225,7 +225,6 @@ def main():
                 self.batch_size = 5
                 self.do_lower_case = True
                 self.save_steps = 20
-
 
         args = Args()
 
@@ -264,14 +263,14 @@ def main():
                                       'device': device,
                                       'input_dim': tokenizer.vocab_size,
                                       },
-                              'bert': {'pretrained_model_name_or_path': args.classifier_model_name_or_path},
-                              'roberta': {'pretrained_model_name_or_path': args.classifier_model_name_or_path},
-                              'xlmroberta': {'pretrained_model_name_or_path': args.classifier_model_name_or_path},
+                              'bert': {'pretrained_model_name_or_path': args.generator_model_name_or_path},
+                              'roberta': {'pretrained_model_name_or_path': args.generator_model_name_or_path},
+                              'xlmroberta': {'pretrained_model_name_or_path': args.generator_model_name_or_path},
+                              'albert': {'pretrained_model_name_or_path': args.generator_model_name_or_path},
                               }
     classifier_config_dicts = {'linear': {'num_choices': 4,
                                           'in_features': args.max_length,
-                                          'hidden_features': 100,
-                                          },
+                                          'hidden_features': 100,},
                                'bert': {'pretrained_model_name_or_path': args.classifier_model_name_or_path,
                                         'num_labels': 4,
                                         'finetuning_task': 'ARC'},
@@ -286,7 +285,6 @@ def main():
     generator_config = generator_config_class.from_pretrained(**generator_config_dicts[args.generator_model_type])
     classifier_config = classifier_config_class.from_pretrained(**classifier_config_dicts[args.classifier_model_type])
 
-
     generator_model_dicts = {'linear': {'config': generator_config},
                               'seq': {'config': generator_config},
                               'bert': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
@@ -294,6 +292,8 @@ def main():
                               'roberta': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
                                        'config': generator_config},
                               'xlmroberta': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
+                                       'config': generator_config},
+                              'albert': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
                                        'config': generator_config},
                               }
     classifier_model_dicts = {'linear':{'config': classifier_config},
@@ -355,13 +355,19 @@ def main():
             fake_inputs = attentionM(**inputs)
 
             # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
+            fake_inputs = {k: v.to(device) for k, v in fake_inputs.items()}
             fake_inputs = generatorM(**fake_inputs)
 
             # flip labels to represent the wrong answers are actually right
             fake_inputs = flip_labels(**fake_inputs)
 
             # get the predictions of which answers are the correct pairing from the classifier
+            fake_inputs = {k: v.to(device) for k, v in fake_inputs.items()}
             predictions, errorG = classifierM(**fake_inputs)
+
+            if errorG is None:
+                logger.warning('ErrorG is None!')
+                raise Exception('ErrorG is None!')
 
             # based on the loss function update the parameters within the generator/ attention model
             errorG.backward()
@@ -397,6 +403,13 @@ def main():
             # see if the classifier can determine difference between fake and real data
             predictions_fake, error_fake = classifierM(**fake_inputs)
             predictions_real, error_real = classifierM(**inputs)
+
+            if error_fake is None:
+                logger.warning('Error_fake is None!')
+                raise Exception('Error_fake is None!')
+            if error_real is None:
+                logger.warning('Error_real is None!')
+                raise Exception('Error_real is None!')
 
             # calculate gradients from each loss functions
             error_fake.backward()

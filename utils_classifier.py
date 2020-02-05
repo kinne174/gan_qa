@@ -53,7 +53,6 @@ class ClassifierNet(torch.nn.Module):
         return cls(config)
 
     def forward(self, input_ids, token_type_ids, attention_mask, labels, **kwargs):
-        # TODOfixed create a model that outputs the predictions and the error/loss
         temp_input_ids = input_ids.view(-1, input_ids.shape[-1]).float()
         x = self.linear(temp_input_ids)
         x = self.out(x)
@@ -100,9 +99,34 @@ def classifier(features, model, labels, randomize=False):
         return randomize_classifier(features, model, labels)
 
 
+class MyBertForMultipleChoice(nn.Module):
+    def __init__(self, pretrained_model_name_or_path, config):
+        super(MyBertForMultipleChoice, self).__init__()
+        self.bert = BertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config)
+
+        self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
+
+    def forward(self, my_attention_mask, labels, **kwargs):
+        outputs = self.bert(**kwargs)
+        classification_scores = outputs
+
+        classification_scores = classification_scores.view(-1, self.num_choices)
+
+        if labels is not None:
+            loss = self.BCEWithLogitsLoss(classification_scores, labels)
+            return classification_scores, loss
+
+        return classification_scores, None
+
+
+
 classifier_models_and_config_classes = {
     'linear': (ClassifierConfig, ClassifierNet),
-    'bert': (BertConfig, BertForMultipleChoice),
+    'bert': (BertConfig, MyBertForMultipleChoice),
     'roberta': (RobertaConfig, RobertaForMultipleChoice),
     'xlmroberta': (XLMRobertaConfig, XLMRobertaForMultipleChoice),
 }

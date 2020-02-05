@@ -3,7 +3,8 @@ from utils_embedding_model import ArcFeature
 import torch
 import torch.nn as nn
 from transformers import (BertForMaskedLM, DistilBertForMaskedLM, RobertaForMaskedLM,
-                          BertConfig, DistilBertConfig, RobertaConfig)
+                          BertConfig, DistilBertConfig, RobertaConfig, AlbertConfig,
+                          AlbertForMaskedLM)
 from transformers import PretrainedConfig
 from torch.nn import functional as F
 import logging
@@ -213,7 +214,7 @@ class Seq2Seq(nn.Module):
 
         out_dict = {k: v for k,v in kwargs.items()}
         # reshape input ids to resemble known form
-        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0]))
+        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0])).long()
 
         return out_dict
 
@@ -281,63 +282,216 @@ class GeneratorNet(torch.nn.Module):
 
         return x
 
+class MyAlbertForMaskedLM(nn.Module):
+    def __init__(self, pretrained_model_name_or_path, config):
+        super(MyAlbertForMaskedLM, self).__init__()
+        self.albert = AlbertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
+
+    def forward(self, input_ids, my_attention_mask, attention_mask, token_type_ids, **kwargs):
+
+        # change from dimension [batch size, 4, max length] to [4*batch size, max length]
+        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+        temp_attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
+        temp_token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
+        temp_my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])  # [batch size, max len]
+
+        batch_size = temp_input_ids.shape[0]  # this should be 4*batch size
+        max_len = temp_input_ids.shape[1]  # this should be max length
+        out_len = max(torch.sum(temp_my_attention_mask, dim=1))  # number of maximum masked tokens
+
+        # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
+        albert_outputs = self.albert(input_ids=temp_input_ids,
+                                      attention_mask=temp_attention_mask,
+                                      token_type_ids=temp_token_type_ids)
+
+        prediction_scores = albert_outputs[0]
+        vocab_size = prediction_scores.shape[-1]
+
+        # tensor to store decoder outputs [max attention masks, batch size, vocab size]
+        outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
+
+        for t in range(1, max_len):
+            # place predictions in a tensor holding predictions for each token
+            # outputs[t] = output
+            for j in range(batch_size):
+                if temp_my_attention_mask[j, t] == 0:
+                    continue
+                else:
+                    i = torch.sum(temp_my_attention_mask[j, :t])
+                    outputs[i, j, :] = prediction_scores[j, t, :]
+
+        # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
+        gs = gumbel_softmax(outputs, hard=True)
+
+        # should give dimension [max attention masks, 4*batch size, vocab size] with 0,1,2...,vocab size along the third dimension
+        input_indicators = torch.arange(0, gs.shape[2]).expand_as(gs)
+
+        # should give dimension [max attention masks, 4*batch size] with prediction of word token
+        summed = torch.sum(gs * input_indicators, dim=2)
+        assert torch.max(summed) <= vocab_size
+
+        # gives dimension [max length, batch size] with 0s at non masked tokens and new token at masked tokens
+        new_sentences = torch.zeros(*input_ids.shape)
+        for j in range(batch_size):
+            for k in range(max_len):
+                if temp_attention_mask[j, k] == 0:
+                    continue
+                else:
+                    i = torch.sum(temp_attention_mask[j, :k])
+                    new_sentences[k, j] = summed[i, j]
+        # new_sentences = summed*torch.t(temp_attention_mask)
+
+        # gives dimension [batch size, max length] with 0s at masked tokens and remaining tokens at non masked tokens
+        remaining_sentences = torch.t(input_ids) * (torch.ones(*temp_attention_mask.shape) - temp_attention_mask)
+
+        assert remaining_sentences.shape == torch.t(
+            new_sentences).shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape,
+                                                                                  *torch.t(new_sentences).shape)
+
+        # adding gives new sentences with replaced tokens [batch size, max length]
+        out = remaining_sentences + torch.t(new_sentences)
+
+        out_dict = {k: v for k, v in kwargs.items()}
+        # reshape to resemble known form
+        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0])).long()
+        out_dict['my_attention_mask'] = my_attention_mask
+        out_dict['attention_mask'] = attention_mask
+        out_dict['token_type_ids'] = token_type_ids
+
+        return out_dict
+
 
 class MyBertForMaskedLM(nn.Module):
-    def __init__(self, config):
-        self.model = super(MyBertForMaskedLM, self).__init__()
+    def __init__(self, pretrained_model_name_or_path, config):
+        super(MyBertForMaskedLM, self).__init__()
+        self.bert = BertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
 
-    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None, inputs_embeds=None,
-                masked_lm_labels=None, encoder_hidden_states=None, encoder_attention_mask=None, lm_labels=None, ):
-        outputs = self.model()
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
 
+    def forward(self, input_ids, my_attention_mask, attention_mask, token_type_ids, **kwargs):
 
+        # change from dimension [batch size, 4, max length] to [4*batch size, max length]
+        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+        temp_attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
+        temp_token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
+        temp_my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])  # [batch size, max len]
 
+        batch_size = temp_input_ids.shape[0]  # this should be 4*batch size
+        max_len = temp_input_ids.shape[1]  # this should be max length
+        out_len = max(torch.sum(temp_my_attention_mask, dim=1)) # number of maximum masked tokens
 
-def int_list(l):
-    return [int(o) for o in l]
+        # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
+        prediction_scores = self.bert(input_ids=temp_input_ids,
+                                      attention_mask=temp_attention_mask,
+                                      token_type_ids=temp_token_type_ids)
 
+        vocab_size = prediction_scores.shape[-1]
 
-def randomize_generator(features, model=None):
-    if model is None:
-        for f in features:
-            assert isinstance(f, ArcFeature)
+        # tensor to store decoder outputs [max attention masks, batch size, vocab size]
+        outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
 
-            cf = f.choices_features
-            for d in cf:
-                # cf is a list of dicts with keys 'input_ids', ..., ..., 'attention_mask'
-                new_input_ids = [ii//2 if am == 1 else ii for ii, am in zip(d['input_ids'], d['attention_mask'])]
-                d['input_ids'] = new_input_ids
-    else:
-        all_input_ids = []
-        for f in features:
-            assert isinstance(f, ArcFeature)
-
-            cf = f.choices_features
-            all_input_ids.extend([d['input_ids'] for d in cf])
-
-        input_ids_tensor = torch.tensor(all_input_ids, dtype=torch.float)
-        output = model(input_ids_tensor)
-
-        output = output.view((len(features), 4, -1))
-
-        for ii, f in enumerate(features):
-            cf = f.choices_features
-            for jj, d in enumerate(cf):
-                d['input_ids'] = int_list(output[ii, jj, :].tolist())
-
-    return features
+        for t in range(1, max_len):
+            # place predictions in a tensor holding predictions for each token
+            # outputs[t] = output
+            for j in range(batch_size):
+                if temp_my_attention_mask[j, t] == 0:
+                    continue
+                else:
+                    i = torch.sum(temp_my_attention_mask[j, :t])
+                    outputs[i, j, :] = prediction_scores[j, t, :]
 
 
-def generator(features, model, randomize=False):
-    if randomize:
-        return randomize_generator(features, model)
+        # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
+        gs = gumbel_softmax(outputs, hard=True)
+
+        # should give dimension [max attention masks, 4*batch size, vocab size] with 0,1,2...,vocab size along the third dimension
+        input_indicators = torch.arange(0, gs.shape[2]).expand_as(gs)
+
+        # should give dimension [max attention masks, 4*batch size] with prediction of word token
+        summed = torch.sum(gs * input_indicators, dim=2)
+        assert torch.max(summed) <= vocab_size
+
+        # gives dimension [max length, batch size] with 0s at non masked tokens and new token at masked tokens
+        new_sentences = torch.zeros(*input_ids.shape)
+        for j in range(batch_size):
+            for k in range(max_len):
+                if temp_attention_mask[j, k] == 0:
+                    continue
+                else:
+                    i = torch.sum(temp_attention_mask[j, :k])
+                    new_sentences[k, j] = summed[i, j]
+        # new_sentences = summed*torch.t(temp_attention_mask)
+
+        # gives dimension [batch size, max length] with 0s at masked tokens and remaining tokens at non masked tokens
+        remaining_sentences = torch.t(input_ids) * (torch.ones(*temp_attention_mask.shape) - temp_attention_mask)
+
+        assert remaining_sentences.shape == torch.t(new_sentences).shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape, *torch.t(new_sentences).shape)
+
+        # adding gives new sentences with replaced tokens [batch size, max length]
+        out = remaining_sentences + torch.t(new_sentences)
+
+        out_dict = {k: v for k, v in kwargs.items()}
+        # reshape to resemble known form
+        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0])).long()
+        out_dict['my_attention_mask'] = my_attention_mask
+        out_dict['attention_mask'] = attention_mask
+        out_dict['token_type_ids'] = token_type_ids
+
+        return out_dict
+
+
+# def int_list(l):
+#     return [int(o) for o in l]
+#
+#
+# def randomize_generator(features, model=None):
+#     if model is None:
+#         for f in features:
+#             assert isinstance(f, ArcFeature)
+#
+#             cf = f.choices_features
+#             for d in cf:
+#                 # cf is a list of dicts with keys 'input_ids', ..., ..., 'attention_mask'
+#                 new_input_ids = [ii//2 if am == 1 else ii for ii, am in zip(d['input_ids'], d['attention_mask'])]
+#                 d['input_ids'] = new_input_ids
+#     else:
+#         all_input_ids = []
+#         for f in features:
+#             assert isinstance(f, ArcFeature)
+#
+#             cf = f.choices_features
+#             all_input_ids.extend([d['input_ids'] for d in cf])
+#
+#         input_ids_tensor = torch.tensor(all_input_ids, dtype=torch.float)
+#         output = model(input_ids_tensor)
+#
+#         output = output.view((len(features), 4, -1))
+#
+#         for ii, f in enumerate(features):
+#             cf = f.choices_features
+#             for jj, d in enumerate(cf):
+#                 d['input_ids'] = int_list(output[ii, jj, :].tolist())
+#
+#     return features
+#
+#
+# def generator(features, model, randomize=False):
+#     if randomize:
+#         return randomize_generator(features, model)
 
 
 generator_models_and_config_classes = {
     'linear': (GeneratorConfig, GeneratorNet),
     'seq': (GeneratorConfig, Seq2Seq),
-    'bert': (BertConfig, BertForMaskedLM),
+    'bert': (BertConfig, MyBertForMaskedLM),
     'roberta': (RobertaConfig, RobertaForMaskedLM),
     'distilbert': (DistilBertConfig, DistilBertForMaskedLM),
+    'albert': (AlbertConfig, MyAlbertForMaskedLM)
 }
 
