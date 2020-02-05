@@ -99,9 +99,11 @@ def load_and_cache_features(args, tokenizer, subset):
 
     cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}'.format('train', args.tokenizer_name, args.max_length))
     if os.path.exists(cached_features_filename) and not args.overwrite_cache_dir:
+        logger.info('Loading features from ({})'.format(cached_features_filename))
         features = load_features(cached_features_filename)
     else:
         # load in examples and features for training
+        logger.info('Creating examples and features from ({})'.format(args.data_dir))
         examples = example_loader(args, subset=subset, randomize=args.do_randomize, cutoff=args.cutoff)
         features = feature_loader(args, tokenizer, examples, randomize=args.do_randomize)
 
@@ -198,7 +200,7 @@ def main():
                 self.data_dir = '../ARC/ARC-with-context/'
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
-                self.tokenizer_name = 'bert-base-uncased'
+                self.tokenizer_name = 'albert'
                 self.generator_model_type = 'albert'
                 self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'linear'
@@ -228,8 +230,19 @@ def main():
 
         args = Args()
 
+    # Setup logging
+    num_logging_files = len(glob.glob('logging/logging_*'))
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO,
+                        filename='logging/logging_{}'.format(num_logging_files))
+
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and not args.overwrite_output_dir:
         raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
+    if not os.path.exists(args.output_dir):
+        raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
+    if not os.path.exists(args.cache_dir):
+        raise Exception('Cache directory does not exist here ({})'.format(args.cache_dir))
 
     # Set seed
     set_seed(args)
@@ -246,13 +259,6 @@ def main():
 
     # get whether running on cpu or gpu
     device = get_device() if args.use_gpu else torch.device('cpu')
-
-    # Setup logging
-    num_logging_files = len(glob.glob('logging/logging_*'))
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S',
-                        level=logging.INFO,
-                        filename='logging/logging_{}'.format(num_logging_files))
     logger.info('Using device '.format(device))
 
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
@@ -282,6 +288,7 @@ def main():
                                         'finetuning_task': 'ARC'},
                                }
 
+    logger.info('Establishing config classes.')
     generator_config = generator_config_class.from_pretrained(**generator_config_dicts[args.generator_model_type])
     classifier_config = classifier_config_class.from_pretrained(**classifier_config_dicts[args.classifier_model_type])
 
@@ -305,6 +312,7 @@ def main():
                                        'config': classifier_config},
                               }
 
+    logger.info('Establishing model classes')
     generatorM = generator_model_class.from_pretrained(**generator_model_dicts[args.generator_model_type])
     classifierM = classifier_model_class.from_pretrained(**classifier_model_dicts[args.classifier_model_type])
 
@@ -319,6 +327,7 @@ def main():
     classifierM.apply(init_weights)
 
     # move to proper device based on if gpu is available
+    logger.info('Loading models to {}'.format(device))
     generatorM.to(device)
     attentionM.to(device)
     classifierM.to(device)
@@ -335,9 +344,11 @@ def main():
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
+    logger.info('Starting to train!')
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         for iterate, batch in enumerate(epoch_iterator):
+            logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
 
             batch = tuple(t.to(device) for t in batch)
             inputs = {'input_ids': batch[0],
@@ -353,10 +364,12 @@ def main():
 
             # this changes the 'my_attention_masks' input to highlight which words should be changed
             fake_inputs = attentionM(**inputs)
+            logger.info('Attention success')
 
             # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
             fake_inputs = {k: v.to(device) for k, v in fake_inputs.items()}
             fake_inputs = generatorM(**fake_inputs)
+            logger.info('Generator success')
 
             # flip labels to represent the wrong answers are actually right
             fake_inputs = flip_labels(**fake_inputs)
@@ -364,6 +377,7 @@ def main():
             # get the predictions of which answers are the correct pairing from the classifier
             fake_inputs = {k: v.to(device) for k, v in fake_inputs.items()}
             predictions, errorG = classifierM(**fake_inputs)
+            logger.info('Generator classification success')
 
             if errorG is None:
                 logger.warning('ErrorG is None!')
@@ -384,10 +398,13 @@ def main():
             # print(list(classifierM.parameters())[0].grad)
             # print(torch.max(list(classifierM.parameters())[0].grad))
             # print('*****************************************************************')
+            if not all([torch.max(list(generatorM.parameters())[i]) == 0 for i in range(len(list(generatorM.parameters())))]):
+                raise Exception('There is no gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 
             # Update generatorM parameters
             generatorO.step()
             # attentionO.step()
+            logger.info('Generator step success!')
 
             # zero out gradient of networks
             generatorM.zero_grad()
@@ -403,6 +420,7 @@ def main():
             # see if the classifier can determine difference between fake and real data
             predictions_fake, error_fake = classifierM(**fake_inputs)
             predictions_real, error_real = classifierM(**inputs)
+            logger.info('Classifier fake and real data success!')
 
             if error_fake is None:
                 logger.warning('Error_fake is None!')
@@ -423,14 +441,17 @@ def main():
             #     print(i)
             #     print(list(generatorM.parameters())[i].grad)
                 # print(torch.max(list(generatorM.parameters())[i].grad))
-            print('classifier model')
-            for i in range(len(list(classifierM.parameters()))):
-                print(list(classifierM.parameters())[i].grad)
+            # print('classifier model')
+            # for i in range(len(list(classifierM.parameters()))):
+            #     print(list(classifierM.parameters())[i].grad)
                 # print(torch.max(list(classifierM.parameters())[i].grad))
-            print('*****************************************************************')
+            # print('*****************************************************************')
+            if not all([torch.max(list(classifierM.parameters())[i]) == 0 for i in range(len(list(classifierM.parameters())))]):
+                raise Exception('There is no gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
             # update classifier parameters
             classifierO.step()
+            logger.info('Classifier step success!')
 
             # zero out gradient of networks
             generatorM.zero_grad()
