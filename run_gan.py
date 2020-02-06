@@ -4,12 +4,13 @@ import glob
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from torch.utils.data.sampler import RandomSampler
+from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from transformers import AdamW
 from tqdm import tqdm, trange
 import os
 import argparse
 import numpy as np
+from sklearn.metrics import accuracy_score
 
 from transformers import (BertTokenizer, RobertaTokenizer, DistilBertTokenizer, AlbertTokenizer)
 
@@ -119,6 +120,64 @@ def load_and_cache_features(args, tokenizer, subset):
     dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_mask, all_attention_mask, all_labels)
 
     return dataset
+
+
+def evaluate(args, classifierM, tokenizer, test=False):
+    results = {}
+
+    eval_dataset = load_and_cache_features(args, tokenizer, subset='test' if test else 'dev')
+
+    eval_sampler = SequentialSampler(eval_dataset)
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=min(args.batch_size, 20))
+
+    logger.info('Starting Evaluation!')
+    logger.info('Number of examples: {}'.format(len(eval_dataset)))
+
+    eval_loss = 0.
+    all_predictions = None
+    all_labels = None
+    num_steps = 0
+
+    for batch in tqdm(eval_dataloader, 'Evaluating'):
+        classifierM.eval()
+        batch = tuple(t.to(args.device) for t in batch)
+
+        with torch.no_grad():
+            inputs = {'input_ids': batch[0],
+                      'attention_mask': batch[1],
+                      'token_type_ids': batch[2],
+                      #'my_attention_mask': batch[3],
+                      'labels': batch[4],
+                      }
+            eval_predictions, eval_error = classifierM(**inputs)
+
+            eval_loss += eval_error.mean().item()
+
+        if all_predictions is None:
+            all_predictions = eval_predictions.detach().cpu().numpy()
+            all_labels = inputs['labels'].detach().cpu().numpy()
+        else:
+            all_predictions = np.append(all_predictions, eval_predictions.detach().cpu().numpy(), axis=0)
+            all_labels = np.append(all_labels, inputs['labels'].detach().cpu().numpy(), axis=0)
+
+        num_steps += 1
+
+    eval_loss = eval_loss / num_steps
+    all_predictions = np.argmax(all_predictions, axis=1)
+    all_labels = np.argmax(all_labels, axis=1)
+    accuracy = accuracy_score(all_labels, all_predictions)
+    num_correct = accuracy_score(all_labels, all_predictions, normalize=False)
+
+    results['accuracy'] = accuracy
+    results['number correct'] = num_correct
+    results['number of examples'] = len(eval_dataset)
+    results['loss'] = eval_loss
+
+    logger.info('After evaluating:')
+    for key, val in results.items():
+        logger.info('The {} is {}'.format(key, round(val, 3)))
+
+    return results
 
 
 def main():
@@ -237,8 +296,8 @@ def main():
                         level=logging.INFO,
                         filename='logging/logging_{}'.format(num_logging_files))
 
-    # if os.path.exists(args.cache_dir) and os.listdir(args.cache_dir) and not args.overwrite_cache_dir:
-    #     raise Exception("Cache directory ({}) already exists and is not empty. Use --overwrite_cache_dir to overcome.".format(args.output_dir))
+    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and not args.overwrite_output_dir:
+        raise Exception("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
         raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
     if not os.path.exists(args.cache_dir):
@@ -259,7 +318,8 @@ def main():
 
     # get whether running on cpu or gpu
     device = get_device() if args.use_gpu else torch.device('cpu')
-    logger.info('Using device {}'.format(device))
+    args.device = device
+    logger.info('Using device {}'.format(args.device))
 
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
@@ -324,15 +384,15 @@ def main():
     classifierM.apply(init_weights)
 
     # move to proper device based on if gpu is available
-    logger.info('Loading models to {}'.format(device))
-    generatorM.to(device)
-    attentionM.to(device)
-    classifierM.to(device)
+    logger.info('Loading models to {}'.format(args.device))
+    generatorM.to(args.device)
+    attentionM.to(args.device)
+    classifierM.to(args.device)
 
-    if device == 'cuda':
-        logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(device,
-                                                                                                           torch.cuda.memory_allocated(device),
-                                                                                                           torch.cuda.memory_cached(device)))
+    if args.device == 'cuda':
+        logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(args.device,
+                                                                                                           torch.cuda.memory_allocated(args.device),
+                                                                                                           torch.cuda.memory_cached(args.device)))
 
     # optimizers
     classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
@@ -341,13 +401,15 @@ def main():
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
+    best_dev_acc = 0.0
+
     logger.info('Starting to train!')
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         for iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
 
-            batch = tuple(t.to(device) for t in batch)
+            batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids': batch[0],
                       'attention_mask': batch[1],
                       'token_type_ids': batch[2],
@@ -364,7 +426,7 @@ def main():
             logger.info('Attention success')
 
             # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
-            fake_inputs = {k: v.to(device) for k, v in fake_inputs.items()}
+            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
             fake_inputs = generatorM(**fake_inputs)
             logger.info('Generator success')
 
@@ -372,7 +434,7 @@ def main():
             fake_inputs = flip_labels(**fake_inputs)
 
             # get the predictions of which answers are the correct pairing from the classifier
-            fake_inputs = {k: v.to(device) for k, v in fake_inputs.items()}
+            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
             predictions, errorG = classifierM(**fake_inputs)
             logger.info('Generator classification success')
 
@@ -464,28 +526,52 @@ def main():
             errorD = error_real + error_fake
 
             # log error for this step
-            # TODO write this step to logging file
+            logger.info('The generator error is {}'.format(round(errorG, 3)))
+            logger.info('The classfier error is {}'.format(round(errorD, 3)))
 
             # save models in cache dir
             if (epoch*args.batch_size + iterate + 1) % args.save_steps == 0 and args.save_steps > 0:
-                # TODO save models in cache directory
-                pass
+                # TODO test this
+                output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(epoch*args.batch_size + iterate + 1))
+                if not os.path.exists(output_dir_generator):
+                    os.makedirs(output_dir_generator)
+                generator_model_to_save = generatorM
+                generator_model_to_save.save_pretrained(output_dir_generator)
+
+                output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(epoch*args.batch_size + iterate + 1))
+                if not os.path.exists(output_dir_classifier):
+                    os.makedirs(output_dir_classifier)
+                generator_model_to_save = generatorM
+                generator_model_to_save.save_pretrained(output_dir_classifier)
+
+                logger.info('Saving model checkpoints to {}'.format(args.output_dir))
 
         if args.evaluate_during_training:
-            # TODO write evaluation code and put it here
-            pass
+            eval_results = evaluate(args, classifierM, tokenizer, test=False)
+
+            if eval_results['accuracy'] > best_dev_acc:
+                best_dev_acc = eval_results['accuracy']
+                best_dev_loss = eval_results['loss']
+                best_epoch = epoch
 
         epoch_iterator.close()
 
     train_iterator.close()
 
+    if args.evaluate_during_training:
+        logger.info('The best dev accuracy during training is {}, loss is {} on epoch {}'.format(round(best_dev_acc, 3),
+                                                                                                 round(best_dev_loss, 3),
+                                                                                                 best_epoch))
+
     if args.do_evaluate:
-        # TODO write evaluation code
-        pass
+        eval_results = evaluate(args, classifierM, tokenizer)
+        logger.info('The dev accuracy after training is {}, loss is {}'.format(round(eval_results['accuracy'], 3),
+                                                                               round(eval_results['loss'], 3)))
+
+
 
 
 if __name__ == '__main__':
     main()
 
-# TODO make sure gumbel softmax part is compatible with transformer models
 # TODO one isssue with this is I need to code up how to handle non pytorch models since they won't work with optimizer/loss functionality
