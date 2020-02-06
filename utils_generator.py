@@ -184,11 +184,7 @@ class Seq2Seq(nn.Module):
             # decide if we are going to use teacher forcing or not
             # teacher_force = random.random() < teacher_forcing_ratio
 
-            # get the highest predicted token from our predictions
-            top1 = output.argmax(1)
-
-            # if teacher forcing, use actual next token as next input
-            # if not, use predicted token
+            # get the true token to supply next
             input = input_ids[t, :]
 
         # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
@@ -222,7 +218,7 @@ class Seq2Seq(nn.Module):
 
         out_dict = {k: v for k,v in kwargs.items()}
         # reshape input ids to resemble known form
-        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0])).long()
+        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0]))
 
         return out_dict
 
@@ -292,7 +288,6 @@ class MyAlbertForMaskedLM(nn.Module):
 
         for t in range(1, max_len):
             # place predictions in a tensor holding predictions for each token
-            # outputs[t] = output
             for j in range(batch_size):
                 if temp_my_attention_mask[j, t] == 0:
                     continue

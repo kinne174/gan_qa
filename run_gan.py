@@ -201,8 +201,8 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'albert'
-                self.generator_model_name_or_path = 'albert-base-v2'
+                self.generator_model_type = 'seq'
+                self.generator_model_name_or_path = None
                 self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = None
                 self.attention_model_type = 'linear'
@@ -220,7 +220,7 @@ def main():
                 self.do_not_train = False
                 self.use_gpu = False
                 self.overwrite_output_dir = False
-                self.overwrite_cache_dir = True
+                self.overwrite_cache_dir = False
                 self.seed = 1234
                 self.cache_features = False
                 self.max_length = 512
@@ -395,8 +395,10 @@ def main():
             # print(list(classifierM.parameters())[0].grad)
             # print(torch.max(list(classifierM.parameters())[0].grad))
             # print('*****************************************************************')
-            if not all([torch.max(list(generatorM.parameters())[i]) == 0 for i in range(len(list(generatorM.parameters())))]):
-                raise Exception('There is no gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+            if any([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
+                raise Exception('There is some None gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+            if any([torch.max(list(generatorM.parameters())[i].grad) == 0 for i in range(len(list(generatorM.parameters())))]):
+                raise Exception('There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 
             # Update generatorM parameters
             generatorO.step()
