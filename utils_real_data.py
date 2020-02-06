@@ -50,10 +50,10 @@ def randomize_example_loader(cutoff):
     return all_examples
 
 
-def example_loader(args, subset, randomize=False, cutoff=None):
+def example_loader(args, subset):
     # returns an object of type ArcExample similar to hugging face transformers
-    if randomize:
-        return randomize_example_loader(cutoff)
+    if args.do_randomize:
+        return randomize_example_loader(args.cutoff)
 
     all_examples = []
     data_filename = os.path.join(args.data_dir, '{}.jsonl'.format(subset))
@@ -99,7 +99,7 @@ def example_loader(args, subset, randomize=False, cutoff=None):
                                            endings=answer_texts,
                                            label=label))
 
-            if cutoff is not None and len(all_examples) >= cutoff:
+            if args.cutoff is not None and len(all_examples) >= args.cutoff and subset == 'train':
                 break
 
     # make sure there is at least one example

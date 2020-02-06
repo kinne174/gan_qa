@@ -66,10 +66,10 @@ def randomize_feature_loader(examples):
     return input_ids_tensor, all_features
 
 
-def feature_loader(args, tokenizer, examples, randomize=False):
+def feature_loader(args, tokenizer, examples):
     # returns a list of objects of type ArcFeature similar to hugging face transformers
 
-    if randomize:
+    if args.do_randomize:
         return randomize_feature_loader(examples)
 
     all_features = []

@@ -98,15 +98,15 @@ def label_map(labels, num_choices):
 def load_and_cache_features(args, tokenizer, subset):
     assert subset in ['train', 'dev', 'test']
 
-    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}'.format('train', args.tokenizer_name, args.max_length))
+    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}'.format(subset, args.tokenizer_name, args.max_length))
     if os.path.exists(cached_features_filename) and not args.overwrite_cache_dir:
         logger.info('Loading features from ({})'.format(cached_features_filename))
         features = load_features(cached_features_filename)
     else:
         # load in examples and features for training
         logger.info('Creating examples and features from ({})'.format(args.data_dir))
-        examples = example_loader(args, subset=subset, randomize=args.do_randomize, cutoff=args.cutoff)
-        features = feature_loader(args, tokenizer, examples, randomize=args.do_randomize)
+        examples = example_loader(args, subset=subset)
+        features = feature_loader(args, tokenizer, examples)
 
         assert save_features(features, cached_features_filename) == -1
 
@@ -171,7 +171,7 @@ def evaluate(args, classifierM, tokenizer, test=False):
     results['accuracy'] = accuracy
     results['number correct'] = num_correct
     results['number of examples'] = len(eval_dataset)
-    results['loss'] = eval_loss
+    results['loss'] = round(eval_loss, 5)
 
     logger.info('After evaluating:')
     for key, val in results.items():
@@ -260,14 +260,14 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'albert'
+                self.generator_model_type = 'seq'
                 self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = None
                 self.attention_model_type = 'linear'
                 self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
-                self.evaluate_during_training = False
+                self.evaluate_during_training = True
                 self.cutoff = 50
                 self.do_randomize = False
                 self.epochs = 3
@@ -278,14 +278,13 @@ def main():
                 self.do_evaluate = False
                 self.do_not_train = False
                 self.use_gpu = False
-                self.overwrite_output_dir = False
+                self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
                 self.seed = 1234
-                self.cache_features = False
                 self.max_length = 512
-                self.batch_size = 5
+                self.batch_size = 10
                 self.do_lower_case = True
-                self.save_steps = 20
+                self.save_steps = 1
 
         args = Args()
 
@@ -526,8 +525,8 @@ def main():
             errorD = error_real + error_fake
 
             # log error for this step
-            logger.info('The generator error is {}'.format(round(errorG, 3)))
-            logger.info('The classfier error is {}'.format(round(errorD, 3)))
+            logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
+            logger.info('The classfier error is {}'.format(round(errorD.detach().item(), 3)))
 
             # save models in cache dir
             if (epoch*args.batch_size + iterate + 1) % args.save_steps == 0 and args.save_steps > 0:
@@ -536,15 +535,21 @@ def main():
                 if not os.path.exists(output_dir_generator):
                     os.makedirs(output_dir_generator)
                 generator_model_to_save = generatorM
-                generator_model_to_save.save_pretrained(output_dir_generator)
+                if hasattr(generator_model_to_save, 'save_pretrained'):
+                    generator_model_to_save.save_pretrained(output_dir_generator)
+                    logger.info('Saving generator model checkpoint to {}'.format(output_dir_generator))
+                else:
+                    logger.info('Not saving generator model.')
 
                 output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(epoch*args.batch_size + iterate + 1))
                 if not os.path.exists(output_dir_classifier):
                     os.makedirs(output_dir_classifier)
-                generator_model_to_save = generatorM
-                generator_model_to_save.save_pretrained(output_dir_classifier)
-
-                logger.info('Saving model checkpoints to {}'.format(args.output_dir))
+                classifier_model_to_save = classifierM
+                if hasattr(classifier_model_to_save, 'save_pretrained'):
+                    logger.info('Saving classifier model checkpoint to {}'.format(output_dir_classifier))
+                    classifier_model_to_save.save_pretrained(output_dir_classifier)
+                else:
+                    logger.info('Not saving classifier model.')
 
         if args.evaluate_during_training:
             eval_results = evaluate(args, classifierM, tokenizer, test=False)
