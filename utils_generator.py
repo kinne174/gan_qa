@@ -462,7 +462,6 @@ class MyBertForMaskedLM(nn.Module):
 
 
 generator_models_and_config_classes = {
-    'linear': (GeneratorConfig, GeneratorNet),
     'seq': (GeneratorConfig, Seq2Seq),
     'bert': (BertConfig, MyBertForMaskedLM),
     'roberta': (RobertaConfig, RobertaForMaskedLM),

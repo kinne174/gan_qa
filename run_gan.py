@@ -137,7 +137,7 @@ def main():
                         help='Name of the tokenizer to use from transformers package from a pretrained hf model')
 
     # Optional
-    parser.add_argument('--generator_model_type', default='linear', type=str,
+    parser.add_argument('--generator_model_type', default='seq', type=str,
                         help='Type of the generator model to use from {}'.format(', '.join(list(generator_models_and_config_classes.keys()))))
     parser.add_argument('--generator_model_name_or_path', default=None, type=str,
                         help='Name or path to generator model.')
@@ -260,14 +260,12 @@ def main():
 
     # get whether running on cpu or gpu
     device = get_device() if args.use_gpu else torch.device('cpu')
-    logger.info('Using device '.format(device))
+    logger.info('Using device {}'.format(device))
 
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
 
-    generator_config_dicts = {'linear': {'pretrained_model_name_or_path': 'linear'},
-                              'seq': {'pretrained_model_name_or_path': 'seq',
-                                      'device': device,
+    generator_config_dicts = {'seq': {'pretrained_model_name_or_path': 'seq',
                                       'input_dim': tokenizer.vocab_size,
                                       },
                               'bert': {'pretrained_model_name_or_path': args.generator_model_name_or_path},
@@ -293,8 +291,7 @@ def main():
     generator_config = generator_config_class.from_pretrained(**generator_config_dicts[args.generator_model_type])
     classifier_config = classifier_config_class.from_pretrained(**classifier_config_dicts[args.classifier_model_type])
 
-    generator_model_dicts = {'linear': {'config': generator_config},
-                              'seq': {'config': generator_config},
+    generator_model_dicts = {'seq': {'config': generator_config},
                               'bert': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
                                        'config': generator_config},
                               'roberta': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
