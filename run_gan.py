@@ -192,8 +192,7 @@ def main():
     parser.add_argument('--seed', default=1234, type=int,
                         help='Random seed for reproducibility')
 
-    use_argparse = False
-    if use_argparse:
+    if not getpass.getuser() == 'Mitch':
         args = parser.parse_args()
     else:
         class Args(object):
