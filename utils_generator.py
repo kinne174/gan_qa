@@ -279,10 +279,10 @@ class MyAlbertForMaskedLM(nn.Module):
         out_len = max(torch.sum(temp_my_attention_mask, dim=1))  # number of maximum masked tokens
 
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
-        # albert_outputs = self.albert(input_ids=temp_input_ids,
-        #                               attention_mask=temp_attention_mask,
-        #                               token_type_ids=temp_token_type_ids)
-        albert_outputs = [torch.rand((4*batch_size, max_len, 30000))]
+        albert_outputs = self.albert(input_ids=temp_input_ids,
+                                      attention_mask=temp_attention_mask,
+                                      token_type_ids=temp_token_type_ids)
+        # albert_outputs = [torch.rand((4*batch_size, max_len, 30000))]
 
         prediction_scores = albert_outputs[0]
         vocab_size = prediction_scores.shape[-1]
@@ -331,7 +331,7 @@ class MyAlbertForMaskedLM(nn.Module):
 
         out_dict = {k: v for k, v in kwargs.items()}
         # reshape to resemble known form
-        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0])).long()
+        out_dict['input_ids'] = out.view(*input_ids.shape).long()
         out_dict['my_attention_mask'] = my_attention_mask
         out_dict['attention_mask'] = attention_mask
         out_dict['token_type_ids'] = token_type_ids
