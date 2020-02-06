@@ -386,10 +386,10 @@ def main():
             # print('attention model')
             # print(list(attentionM.parameters())[0].grad)
             # print(torch.max(list(attentionM.parameters())[0].grad))
-            print('generator model')
-            for i in range(len(list(generatorM.parameters()))):
-                print(i)
-                print(list(generatorM.parameters())[i].grad)
+            # print('generator model')
+            # for i in range(len(list(generatorM.parameters()))):
+            #     print(i)
+            #     print(list(generatorM.parameters())[i].grad)
                 # print(torch.max(list(generatorM.parameters())[0].grad))
             # print('classifier model')
             # print(list(classifierM.parameters())[0].grad)
@@ -441,12 +441,14 @@ def main():
             #     print(list(generatorM.parameters())[i].grad)
                 # print(torch.max(list(generatorM.parameters())[i].grad))
             # print('classifier model')
-            # for i in range(len(list(classifierM.parameters()))):
-            #     print(list(classifierM.parameters())[i].grad)
-                # print(torch.max(list(classifierM.parameters())[i].grad))
+            for i in range(len(list(classifierM.parameters()))):
+                print(list(classifierM.parameters())[i].grad)
+                print(torch.max(list(classifierM.parameters())[i].grad))
             # print('*****************************************************************')
-            if not all([torch.max(list(classifierM.parameters())[i]) == 0 for i in range(len(list(classifierM.parameters())))]):
-                raise Exception('There is no gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
+            if any([list(classifierM.parameters())[i].grad is None for i in range(len(list(classifierM.parameters())))]):
+                raise Exception('There is some None gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
+            if any([torch.max(list(classifierM.parameters())[i].grad) == 0 for i in range(len(list(classifierM.parameters())))]):
+                raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
             # update classifier parameters
             classifierO.step()
