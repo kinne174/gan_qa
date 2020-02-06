@@ -12,6 +12,15 @@ from tqdm import trange
 
 logger = logging.getLogger(__name__)
 
+# return if there is a gpu available
+def get_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    else:
+        return torch.device('cpu')
+
+device = get_device()
+
 
 # from https://github.com/bentrevett/pytorch-seq2seq/blob/master/1%20-%20Sequence%20to%20Sequence%20Learning%20with%20Neural%20Networks.ipynb
 class Encoder(nn.Module):
@@ -125,7 +134,6 @@ class Seq2Seq(nn.Module):
 
         self.encoder = config.encoder
         self.decoder = config.decoder
-        self.device = config.device
 
         assert self.encoder.hid_dim == self.decoder.hid_dim, \
             "Hidden dimensions of encoder and decoder must be equal!"
@@ -149,7 +157,7 @@ class Seq2Seq(nn.Module):
         vocab_size = self.decoder.output_dim  # this should be the number of possible vocab words
 
         # tensor to store decoder outputs [max attention masks, batch size, vocab size]
-        outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
+        outputs = torch.rand((out_len, batch_size, vocab_size)).to(device)
         # outputs = torch.rand((max_len, batch_size, vocab_size)).to(self.device)
 
         # last hidden state of the encoder is used as the initial hidden state of the decoder
@@ -249,39 +257,6 @@ class GeneratorConfig(PretrainedConfig):
         return cls(**kwargs)
 
 
-class GeneratorNet(torch.nn.Module):
-    def __init__(self, config):
-        super(GeneratorNet, self).__init__()
-
-        self.in_features = config.in_features
-        self.hidden_features = config.hidden_features
-
-        self.linear = nn.Sequential(
-            nn.Linear(self.in_features, self.hidden_features),
-            nn.BatchNorm1d(self.hidden_features),
-            nn.ReLU(inplace=True)
-        )
-
-        self.out = nn.Sequential(
-            nn.Linear(self.hidden_features, self.in_features),
-            # nn.BatchNorm1d(self.in_features),
-            nn.Tanh()
-        )
-
-    @classmethod
-    def from_pretrained(cls, config):
-        return cls(config)
-
-    def forward(self, input_ids, my_attention_mask, **kwargs):
-        # TODOfixed create a model that changes input_ids based on my_attention_mask and returns the rest unchanged, trying seq2seq
-        x = self.linear(input_ids)
-        x = self.out(x)
-
-        # for now just make integers out of everything, and don't worry about the attention mask
-        # x = torch.round(x)
-
-        return x
-
 class MyAlbertForMaskedLM(nn.Module):
     def __init__(self, pretrained_model_name_or_path, config):
         super(MyAlbertForMaskedLM, self).__init__()
@@ -312,7 +287,7 @@ class MyAlbertForMaskedLM(nn.Module):
         vocab_size = prediction_scores.shape[-1]
 
         # tensor to store decoder outputs [max attention masks, batch size, vocab size]
-        outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
+        outputs = torch.rand((out_len, batch_size, vocab_size)).to(device)
 
         for t in range(1, max_len):
             # place predictions in a tensor holding predictions for each token

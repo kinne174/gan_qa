@@ -132,9 +132,9 @@ def main():
     parser.add_argument('--cache_dir', default=None, type=str, required=True,
                         help='Folder where saved models will be written')
     parser.add_argument('--transformer_name', default=None, type=str, required=True,
-                        help='Name of the transformer used in tokenizing')
+                        help='Name of the transformer used in tokenizing in {}'.format(', '.join(list(TOKENIZER_CLASSES.keys()))))
     parser.add_argument('--tokenizer_name', default=None, type=str, required=True,
-                        help='Name of the tokenizer to use from transformers package in {}'.format(', '.join(list(TOKENIZER_CLASSES.keys()))))
+                        help='Name of the tokenizer to use from transformers package from a pretrained hf model')
 
     # Optional
     parser.add_argument('--generator_model_type', default='linear', type=str,
@@ -174,6 +174,7 @@ def main():
                         help='Epsilon of classifier for Adam optimizer')
     parser.add_argument('--epsilon_generator', default=1e-8, type=float,
                         help='Epsilon of generator for Adam optimizer')
+    # TODO do some annealing with this min_temperature on gumbel softmax
     parser.add_argument('--min_temperature', default=.5, type=float,
                         help='Minimum temperature for annealing')
     parser.add_argument('--save_steps', default=50, type=int,
@@ -200,7 +201,7 @@ def main():
                 self.data_dir = '../ARC/ARC-with-context/'
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
-                self.tokenizer_name = 'albert'
+                self.tokenizer_name = 'albert-base-v2'
                 self.generator_model_type = 'albert'
                 self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'linear'

@@ -9,6 +9,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# return if there is a gpu available
+def get_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    else:
+        return torch.device('cpu')
+
+device = get_device()
+
 
 class ClassifierConfig(PretrainedConfig):
 
