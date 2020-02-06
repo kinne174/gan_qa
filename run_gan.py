@@ -237,8 +237,8 @@ def main():
                         level=logging.INFO,
                         filename='logging/logging_{}'.format(num_logging_files))
 
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and not args.overwrite_output_dir:
-        raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
+    if os.path.exists(args.cache_dir) and os.listdir(args.cache_dir) and not args.overwrite_cache_dir:
+        raise Exception("Cache directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
         raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
     if not os.path.exists(args.cache_dir):
