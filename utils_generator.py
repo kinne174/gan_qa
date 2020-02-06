@@ -279,9 +279,10 @@ class MyAlbertForMaskedLM(nn.Module):
         out_len = max(torch.sum(temp_my_attention_mask, dim=1))  # number of maximum masked tokens
 
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
-        albert_outputs = self.albert(input_ids=temp_input_ids,
-                                      attention_mask=temp_attention_mask,
-                                      token_type_ids=temp_token_type_ids)
+        # albert_outputs = self.albert(input_ids=temp_input_ids,
+        #                               attention_mask=temp_attention_mask,
+        #                               token_type_ids=temp_token_type_ids)
+        albert_outputs = [torch.rand((4*batch_size, max_len, 30000))]
 
         prediction_scores = albert_outputs[0]
         vocab_size = prediction_scores.shape[-1]
@@ -309,26 +310,24 @@ class MyAlbertForMaskedLM(nn.Module):
         summed = torch.sum(gs * input_indicators, dim=2)
         assert torch.max(summed) <= vocab_size
 
-        # gives dimension [max length, batch size] with 0s at non masked tokens and new token at masked tokens
-        new_sentences = torch.zeros(*input_ids.shape)
+        # gives dimension [4*batch size, max length] with 0s at non masked tokens and new token at masked tokens
+        new_sentences = torch.zeros(*temp_input_ids.shape)
         for j in range(batch_size):
             for k in range(max_len):
-                if temp_attention_mask[j, k] == 0:
+                if temp_my_attention_mask[j, k] == 0:
                     continue
                 else:
-                    i = torch.sum(temp_attention_mask[j, :k])
-                    new_sentences[k, j] = summed[i, j]
+                    i = torch.sum(temp_my_attention_mask[j, :k])
+                    new_sentences[j, k] = summed[i, j]
         # new_sentences = summed*torch.t(temp_attention_mask)
 
         # gives dimension [batch size, max length] with 0s at masked tokens and remaining tokens at non masked tokens
-        remaining_sentences = torch.t(input_ids) * (torch.ones(*temp_attention_mask.shape) - temp_attention_mask)
+        remaining_sentences = temp_input_ids * (torch.ones(*temp_attention_mask.shape) - temp_attention_mask)
 
-        assert remaining_sentences.shape == torch.t(
-            new_sentences).shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape,
-                                                                                  *torch.t(new_sentences).shape)
+        assert remaining_sentences.shape == new_sentences.shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape, *new_sentences.shape)
 
         # adding gives new sentences with replaced tokens [batch size, max length]
-        out = remaining_sentences + torch.t(new_sentences)
+        out = remaining_sentences + new_sentences
 
         out_dict = {k: v for k, v in kwargs.items()}
         # reshape to resemble known form

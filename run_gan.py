@@ -207,7 +207,7 @@ def main():
                 self.classifier_model_name_or_path = None
                 self.attention_model_type = 'linear'
                 self.attnetion_model_name_or_path = None
-                self.transformer_name = 'bert'
+                self.transformer_name = 'albert'
                 self.evaluate_during_training = False
                 self.cutoff = 50
                 self.do_randomize = False
@@ -220,7 +220,7 @@ def main():
                 self.do_not_train = False
                 self.use_gpu = False
                 self.overwrite_output_dir = False
-                self.overwrite_cache_dir = False
+                self.overwrite_cache_dir = True
                 self.seed = 1234
                 self.cache_features = False
                 self.max_length = 512
@@ -237,8 +237,8 @@ def main():
                         level=logging.INFO,
                         filename='logging/logging_{}'.format(num_logging_files))
 
-    if os.path.exists(args.cache_dir) and os.listdir(args.cache_dir) and not args.overwrite_cache_dir:
-        raise Exception("Cache directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
+    # if os.path.exists(args.cache_dir) and os.listdir(args.cache_dir) and not args.overwrite_cache_dir:
+    #     raise Exception("Cache directory ({}) already exists and is not empty. Use --overwrite_cache_dir to overcome.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
         raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
     if not os.path.exists(args.cache_dir):
