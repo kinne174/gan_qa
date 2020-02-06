@@ -201,8 +201,8 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'seq'
-                self.generator_model_name_or_path = None
+                self.generator_model_type = 'albert'
+                self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = None
                 self.attention_model_type = 'linear'
@@ -441,9 +441,9 @@ def main():
             #     print(list(generatorM.parameters())[i].grad)
                 # print(torch.max(list(generatorM.parameters())[i].grad))
             # print('classifier model')
-            for i in range(len(list(classifierM.parameters()))):
-                print(list(classifierM.parameters())[i].grad)
-                print(torch.max(list(classifierM.parameters())[i].grad))
+            # for i in range(len(list(classifierM.parameters()))):
+            #     print(list(classifierM.parameters())[i].grad)
+            #     print(torch.max(list(classifierM.parameters())[i].grad))
             # print('*****************************************************************')
             if any([list(classifierM.parameters())[i].grad is None for i in range(len(list(classifierM.parameters())))]):
                 raise Exception('There is some None gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))

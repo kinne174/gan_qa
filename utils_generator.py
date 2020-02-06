@@ -326,7 +326,7 @@ class MyAlbertForMaskedLM(nn.Module):
 
         out_dict = {k: v for k, v in kwargs.items()}
         # reshape to resemble known form
-        out_dict['input_ids'] = out.view(*input_ids.shape).long()
+        out_dict['input_ids'] = out.view(*input_ids.shape)
         out_dict['my_attention_mask'] = my_attention_mask
         out_dict['attention_mask'] = attention_mask
         out_dict['token_type_ids'] = token_type_ids
