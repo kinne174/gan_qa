@@ -61,7 +61,7 @@ def example_loader(args, subset, randomize=False, cutoff=None):
         jsonl_reader = json_lines.reader(file)
 
         # this will show up when running on console
-        for ind, line in tqdm.tqdm(enumerate(jsonl_reader), desc='Loading {} examples.'.format(subset), mininterval=1):
+        for ind, line in tqdm.tqdm(enumerate(jsonl_reader), desc='Creating {} examples.'.format(subset), mininterval=1):
             if ind % 1000 == 0:
                 logger.info('Writing example number {}'.format(ind))
 
@@ -78,10 +78,14 @@ def example_loader(args, subset, randomize=False, cutoff=None):
             # as I haven't run into it yet personally
             label = line['answerKey']
             if label not in '1234':
-                logger.info('Question id {} had an incorrect label of {}. Skipped it'.format(id, label))
-                continue
+                if label not in 'ABCD':
+                    logger.info('Question id {} had an incorrect label of {}. Skipped it'.format(id, label))
+                    continue
             # label should be the position in the list that the correct answer is
-            label = int(label) - 1
+                else:
+                    label = ord(label) - ord('A')
+            else:
+                label = int(label) - 1
 
             # extract question text, answer texts and contexts
             question_text = line['question']['stem']
