@@ -128,7 +128,7 @@ def evaluate(args, classifierM, tokenizer, test=False):
     eval_dataset = load_and_cache_features(args, tokenizer, subset='test' if test else 'dev')
 
     eval_sampler = SequentialSampler(eval_dataset)
-    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=min(args.batch_size, 20))
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=min(args.batch_size, 100))
 
     logger.info('Starting Evaluation!')
     logger.info('Number of examples: {}'.format(len(eval_dataset)))
@@ -260,14 +260,14 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'seq'
+                self.generator_model_type = 'albert'
                 self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = None
                 self.attention_model_type = 'linear'
                 self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
-                self.evaluate_during_training = True
+                self.evaluate_during_training = False
                 self.cutoff = 50
                 self.do_randomize = False
                 self.epochs = 3
@@ -282,9 +282,9 @@ def main():
                 self.overwrite_cache_dir = False
                 self.seed = 1234
                 self.max_length = 512
-                self.batch_size = 10
+                self.batch_size = 5
                 self.do_lower_case = True
-                self.save_steps = 1
+                self.save_steps = 20
 
         args = Args()
 
@@ -447,17 +447,17 @@ def main():
             # print('attention model')
             # print(list(attentionM.parameters())[0].grad)
             # print(torch.max(list(attentionM.parameters())[0].grad))
-            # print('generator model')
-            # for i in range(len(list(generatorM.parameters()))):
-            #     print(i)
-            #     print(list(generatorM.parameters())[i].grad)
-                # print(torch.max(list(generatorM.parameters())[0].grad))
+            print('generator model')
+            for i in range(len(list(generatorM.parameters()))):
+                print(i)
+                print(list(generatorM.parameters())[i].grad)
+                # print(torch.max(list(generatorM.parameters())[i].grad))
             # print('classifier model')
             # print(list(classifierM.parameters())[0].grad)
             # print(torch.max(list(classifierM.parameters())[0].grad))
             # print('*****************************************************************')
-            if any([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
-                raise Exception('There is some None gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+            if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
+                raise Exception('There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(epoch, iterate))
             if any([torch.max(list(generatorM.parameters())[i].grad) == 0 for i in range(len(list(generatorM.parameters())))]):
                 raise Exception('There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 

@@ -63,8 +63,8 @@ class ClassifierNet(torch.nn.Module):
         return cls(config)
 
     def forward(self, input_ids, token_type_ids, attention_mask, labels, **kwargs):
-        temp_input_ids = input_ids.view(-1, input_ids.shape[-1]).float()
-        x = self.linear(temp_input_ids)
+        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+        x = self.linear(temp_input_ids.float())
         x = self.out(x)
 
         x = x.view(-1, self.num_choices)
@@ -173,7 +173,8 @@ class MyAlbertForMultipleChoice(nn.Module):
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
 
-    def forward(self, my_attention_mask, labels, **kwargs):
+    def forward(self, input_ids, attention_mask, token_type_ids, labels, **kwargs):
+
         outputs = self.bert(**kwargs)
         classification_scores = outputs
 
