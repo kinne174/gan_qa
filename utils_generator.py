@@ -373,7 +373,7 @@ class MyAlbertForMaskedLM(nn.Module):
 
 generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
-    # 'bert': (BertConfig, MyBertForMaskedLM),
+    'bert': (BertConfig, BertForMaskedLM),
     'roberta': (RobertaConfig, RobertaForMaskedLM),
     'distilbert': (DistilBertConfig, DistilBertForMaskedLM),
     'albert': (AlbertConfig, MyAlbertForMaskedLM)

@@ -119,47 +119,47 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
 
         self.init_weights()
 
-def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        position_ids=None,
-        head_mask=None,
-        inputs_embeds=None,
-        labels=None,
-):
+    def forward(
+            self,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            head_mask=None,
+            inputs_embeds=None,
+            labels=None,
+    ):
 
-    num_choices = input_ids.shape[1]
+        num_choices = input_ids.shape[1]
 
-    input_ids = input_ids.view(-1, input_ids.size(-1))
-    attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
-    token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
-    position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
+        input_ids = input_ids.view(-1, input_ids.size(-1))
+        attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
+        token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
+        position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
 
-    outputs = self.albert(
-        input_ids,
-        attention_mask=attention_mask,
-        token_type_ids=token_type_ids,
-        position_ids=position_ids,
-        head_mask=head_mask,
-        inputs_embeds=inputs_embeds,
-    )
+        outputs = self.albert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+        )
 
-    pooled_output = outputs[1]
+        pooled_output = outputs[1]
 
-    pooled_output = self.dropout(pooled_output)
-    logits = self.classifier(pooled_output)
-    reshaped_logits = logits.view(-1, num_choices)
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+        reshaped_logits = logits.view(-1, num_choices)
 
-    outputs = (reshaped_logits,) + outputs[2:]  # add hidden states and attention if they are here
+        outputs = (reshaped_logits,) + outputs[2:]  # add hidden states and attention if they are here
 
-    if labels is not None:
-        loss_fct = nn.CrossEntropyLoss()
-        loss = loss_fct(reshaped_logits, labels)
-        outputs = (loss,) + outputs
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(reshaped_logits, labels)
+            outputs = (loss,) + outputs
 
-    return outputs  # (loss), reshaped_logits, (hidden_states), (attentions)
+        return outputs  # (loss), reshaped_logits, (hidden_states), (attentions)
 
 
 class MyAlbertForMultipleChoice(nn.Module):
@@ -175,17 +175,19 @@ class MyAlbertForMultipleChoice(nn.Module):
 
     def forward(self, input_ids, attention_mask, token_type_ids, labels, **kwargs):
 
-        outputs = self.bert(**kwargs)
-        classification_scores = outputs
-
-        classification_scores = classification_scores.view(-1, self.num_choices)
+        outputs = self.albert(input_ids=input_ids.long(),
+                              token_type_ids=token_type_ids,
+                              attention_mask=attention_mask)
+        classification_scores = outputs[0]
 
         if labels is not None:
+
+            assert classification_scores.shape == labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
+                                                                                                                           labels.shape)
             loss = self.BCEWithLogitsLoss(classification_scores, labels)
             return classification_scores, loss
 
         return classification_scores, None
-
 
 class MyBertForMultipleChoice(nn.Module):
     def __init__(self, pretrained_model_name_or_path, config):
@@ -198,13 +200,17 @@ class MyBertForMultipleChoice(nn.Module):
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
 
-    def forward(self, my_attention_mask, labels, **kwargs):
-        outputs = self.bert(**kwargs)
-        classification_scores = outputs
+    def forward(self, input_ids, attention_mask, token_type_ids, labels, **kwargs):
 
-        classification_scores = classification_scores.view(-1, self.num_choices)
+        outputs = self.bert(input_ids=input_ids.long(),
+                              token_type_ids=token_type_ids,
+                              attention_mask=attention_mask)
+        classification_scores = outputs[0]
 
         if labels is not None:
+
+            assert classification_scores.shape == labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
+                                                                                                                           labels.shape)
             loss = self.BCEWithLogitsLoss(classification_scores, labels)
             return classification_scores, loss
 
