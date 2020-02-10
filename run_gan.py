@@ -260,7 +260,7 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'seq'
+                self.generator_model_type = 'albert'
                 self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'albert'
                 self.classifier_model_name_or_path = 'albert-base-v2'
@@ -301,6 +301,8 @@ def main():
         raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
     if not os.path.exists(args.cache_dir):
         raise Exception('Cache directory does not exist here ({})'.format(args.cache_dir))
+    if not os.path.exists(args.data_dir):
+        raise Exception('Data directory does not exist here ({})'.format(args.data_dir))
 
     # Set seed
     set_seed(args)
@@ -457,13 +459,15 @@ def main():
                 print(i)
                 print(list(generatorM.parameters())[i].grad)
                 # print(torch.max(list(generatorM.parameters())[i].grad))
-            # print('classifier model')
-            # print(list(classifierM.parameters())[0].grad)
+            print('classifier model')
+            for i in range(len(list(classifierM.parameters()))):
+                print(i)
+                print(list(classifierM.parameters())[i].grad)
             # print(torch.max(list(classifierM.parameters())[0].grad))
             # print('*****************************************************************')
             if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
                 raise Exception('There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(epoch, iterate))
-            if any([torch.max(list(generatorM.parameters())[i].grad) == 0 for i in range(len(list(generatorM.parameters())))]):
+            if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
                 raise Exception('There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 
             # Update generatorM parameters
@@ -511,9 +515,9 @@ def main():
             #     print(list(classifierM.parameters())[i].grad)
             #     print(torch.max(list(classifierM.parameters())[i].grad))
             # print('*****************************************************************')
-            if any([list(classifierM.parameters())[i].grad is None for i in range(len(list(classifierM.parameters())))]):
-                raise Exception('There is some None gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
-            if any([torch.max(list(classifierM.parameters())[i].grad) == 0 for i in range(len(list(classifierM.parameters())))]):
+            if all([list(classifierM.parameters())[i].grad is None for i in range(len(list(classifierM.parameters())))]):
+                raise Exception('There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(epoch, iterate))
+            if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
                 raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
             # update classifier parameters
@@ -585,3 +589,5 @@ if __name__ == '__main__':
     main()
 
 # TODO one isssue with this is I need to code up how to handle non pytorch models since they won't work with optimizer/loss functionality
+# combinations that work: seq to linear, albert to linear,
+# combinations that do not work: seq to albert, albert to albert
