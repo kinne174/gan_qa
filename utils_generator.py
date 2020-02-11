@@ -298,7 +298,7 @@ class MyAlbertForMaskedLM(nn.Module):
         albert_outputs = self.albert(input_ids=temp_input_ids.long(),
                                       attention_mask=temp_attention_mask,
                                       token_type_ids=temp_token_type_ids)
-        # albert_outputs = [torch.rand((4*batch_size, max_len, 30000))]
+        # albert_outputs = [torch.rand((4*batch_size, max_len, 30000)).to(device)]
 
         prediction_scores = albert_outputs[0]
         vocab_size = prediction_scores.shape[-1]
@@ -320,7 +320,7 @@ class MyAlbertForMaskedLM(nn.Module):
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
-        onehots = torch.zeros((batch_size, max_len, vocab_size))
+        onehots = torch.zeros((batch_size, max_len, vocab_size)).to(device)
         onehot = torch.FloatTensor(1, vocab_size)
         for i in range(batch_size):
             for j in range(max_len):
@@ -329,7 +329,7 @@ class MyAlbertForMaskedLM(nn.Module):
                     onehots[i, j, :] = gs[k, i, :]
                 else:
                     onehot.zero_()
-                    onehot.scatter_(1, torch.tensor([temp_input_ids[j, i]]).unsqueeze(0), 1)
+                    onehot.scatter_(1, torch.tensor([temp_input_ids[i, j]]).unsqueeze(0), 1)
                     onehots[i, j, :] = onehot
         # change to dimension [4*batch size*max length, vocab size] to make multiplying by embeddings in classifier easier
         onehots = onehots.view(-1, onehots.shape[-1])

@@ -92,7 +92,7 @@ class ClassifierNet(torch.nn.Module):
 
 
 def flip_labels(labels, **kwargs):
-    out_labels = torch.ones(*labels.shape) - labels
+    out_labels = torch.ones(*labels.shape).to(device) - labels
     out_dict = {k: v for k, v in kwargs.items() if not k in ['labels']}
     out_dict['labels'] = out_labels
     return out_dict
