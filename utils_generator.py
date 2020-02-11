@@ -105,7 +105,7 @@ class Decoder(nn.Module):
 
 # from https://discuss.pytorch.org/t/vae-gumbel-softmax/16838
 def sample_gumbel(shape, eps=1e-20):
-    U = torch.Tensor(shape).uniform_(0, 1)
+    U = torch.Tensor(shape).uniform_(0, 1).to(device)
     return -(torch.log(-torch.log(U + eps) + eps))
 
 def gumbel_softmax_sample(logits, temperature):
@@ -188,7 +188,7 @@ class Seq2Seq(nn.Module):
             input = temp_input_ids[t, :]
 
         # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
-        gs = gumbel_softmax(outputs, hard=True).to(device)
+        gs = gumbel_softmax(outputs, hard=True)
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier

@@ -68,7 +68,7 @@ class ClassifierNet(torch.nn.Module):
     def forward(self, input_ids, token_type_ids, attention_mask, labels, **kwargs):
         if 'input_embeds' in kwargs:
             # embedding matrix should be of dimension [vocab size, embedding dimension]
-            embeddings = self.embedding.weight
+            embeddings = self.embedding.weight.to(device)
             # input_embeds should be of dimension [4*batch size*max length, vocab size]
             input_embeds = kwargs['input_embeds']
             assert input_embeds.is_sparse
