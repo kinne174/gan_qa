@@ -99,7 +99,8 @@ def label_map(labels, num_choices):
 def load_and_cache_features(args, tokenizer, subset):
     assert subset in ['train', 'dev', 'test']
 
-    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}'.format(subset, args.tokenizer_name, args.max_length))
+    cutoff_str = '' if args.cutoff is None else '_cutoff{}'.format(args.cutoff)
+    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}{}'.format(subset, args.tokenizer_name, args.max_length, cutoff_str))
     if os.path.exists(cached_features_filename) and not args.overwrite_cache_dir:
         logger.info('Loading features from ({})'.format(cached_features_filename))
         features = load_features(cached_features_filename)
@@ -417,8 +418,9 @@ def main():
     best_dev_acc = 0.0
 
     logger.info('Starting to train!')
+    logger.info('There are {} examples.'.format(len(dataset)))
     for epoch, _ in enumerate(train_iterator):
-        epoch_iterator = tqdm(train_dataloader, desc="Iteration")
+        epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size))
         for iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
 
