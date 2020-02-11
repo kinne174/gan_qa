@@ -68,9 +68,10 @@ def select_field(features, field):
 
 def detach_inputs(fake_inputs, inputs):
     assert 'input_ids' in fake_inputs and 'input_ids' in inputs
+    assert 'inputs_embeds' in fake_inputs
 
-    fake_inputs['input_ids'] = fake_inputs['input_ids'].detach()
-    inputs['input_ids'] = inputs['input_ids'].detach()
+    fake_inputs = {k: v.detach() if hasattr(v, 'detach') else v for k, v in fake_inputs.items()}
+    inputs = {k: v.detach() if hasattr(v, 'detach') else v for k, v in inputs.items()}
 
     return fake_inputs, inputs
 

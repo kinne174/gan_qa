@@ -144,9 +144,13 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
             labels=None,
     ):
 
-        num_choices = input_ids.shape[1]
+        if input_ids is not None:
+            num_choices = input_ids.shape[1]
+            input_ids = input_ids.view(-1, input_ids.size(-1))
+        else:
+            num_choices = inputs_embeds.shape[1]
+            inputs_embeds = inputs_embeds.view(-1, inputs_embeds.shape[2], inputs_embeds.shape[3])
 
-        input_ids = input_ids.view(-1, input_ids.size(-1))
         attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
         token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
         position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
@@ -182,7 +186,6 @@ class MyAlbertForMultipleChoice(nn.Module):
         self.albert = AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config)
 
         # self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
-        # This is the embedding matrix the pre trained albert model uses
         self.word_embeddings = self.albert.albert.embeddings.word_embeddings.weight
         self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
 
@@ -192,9 +195,21 @@ class MyAlbertForMultipleChoice(nn.Module):
 
     def forward(self, input_ids, attention_mask, token_type_ids, labels, **kwargs):
 
-        outputs = self.albert(input_ids=input_ids.long(),
-                              token_type_ids=token_type_ids,
-                              attention_mask=attention_mask)
+        if 'inputs_embeds' in kwargs:
+            embeddings = self.albert.albert.embeddings.word_embeddings.weight
+            inputs_embeds = kwargs['inputs_embeds']
+            assert inputs_embeds.is_sparse
+            temp_inputs_embeds = torch.sparse.mm(inputs_embeds, embeddings)
+            temp_inputs_embeds = temp_inputs_embeds.view(*input_ids.shape, -1)
+
+            outputs = self.albert(token_type_ids=token_type_ids,
+                                  attention_mask=attention_mask,
+                                  inputs_embeds=temp_inputs_embeds)
+        else:
+            outputs = self.albert(input_ids=input_ids.long(),
+                                  token_type_ids=token_type_ids,
+                                  attention_mask=attention_mask)
+
         classification_scores = outputs[0]
 
         if labels is not None:
