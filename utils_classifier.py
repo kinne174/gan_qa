@@ -45,6 +45,8 @@ class ClassifierNet(torch.nn.Module):
         self.in_features = config.in_features
         self.hidden_features = config.hidden_features
 
+        self.embedding = nn.Embedding(config.vocab_size, config.embedding_dimension, padding_idx=0)
+
         self.linear = nn.Sequential(
             nn.Linear(self.in_features, self.hidden_features, bias=True),
             nn.BatchNorm1d(self.hidden_features),
@@ -63,7 +65,19 @@ class ClassifierNet(torch.nn.Module):
         return cls(config)
 
     def forward(self, input_ids, token_type_ids, attention_mask, labels, **kwargs):
-        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+        if 'input_embeds' in kwargs:
+            # embedding matrix should be of dimension [vocab size, embedding dimension]
+            embeddings = self.embedding.weight
+            # input_embeds should be of dimension [4*batch size*max length, vocab size]
+            input_embeds = kwargs['input_embeds']
+            assert input_embeds.is_sparse
+            temp_input_ids = torch.sparse.mm(input_embeds, embeddings)
+            temp_input_ids = temp_input_ids.view(*input_ids.shape, -1)
+            temp_input_ids = torch.mean(temp_input_ids, dim=-1)
+            temp_input_ids = temp_input_ids.view(-1, temp_input_ids.shape[-1])
+        else:
+            temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+
         x = self.linear(temp_input_ids.float())
         x = self.out(x)
 
@@ -167,6 +181,9 @@ class MyAlbertForMultipleChoice(nn.Module):
         super(MyAlbertForMultipleChoice, self).__init__()
         self.albert = AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config)
 
+        # self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
+        # This is the embedding matrix the pre trained albert model uses
+        self.word_embeddings = self.albert.albert.embeddings.word_embeddings.weight
         self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
 
     @classmethod

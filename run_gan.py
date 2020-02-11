@@ -260,9 +260,9 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'albert'
+                self.generator_model_type = 'seq'
                 self.generator_model_name_or_path = 'albert-base-v2'
-                self.classifier_model_type = 'albert'
+                self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = 'albert-base-v2'
                 self.attention_model_type = 'linear'
                 self.attnetion_model_name_or_path = None
@@ -335,7 +335,9 @@ def main():
                               }
     classifier_config_dicts = {'linear': {'num_choices': 4,
                                           'in_features': args.max_length,
-                                          'hidden_features': 100,},
+                                          'hidden_features': 100,
+                                          'vocab_size': tokenizer.vocab_size,
+                                          'embedding_dimension': 10,},
                                'bert': {'pretrained_model_name_or_path': args.classifier_model_name_or_path,
                                         'num_labels': 4,
                                         'finetuning_task': 'ARC'},

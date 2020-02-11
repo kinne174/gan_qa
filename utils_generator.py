@@ -146,23 +146,23 @@ class Seq2Seq(nn.Module):
 
     def forward(self, input_ids, my_attention_mask, **kwargs):
 
-        input_ids = torch.t(input_ids.view(-1, input_ids.shape[-1]))  # [max len, batch size]
-        temp_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])  # [batch size, max len]
+        temp_input_ids = torch.t(input_ids.view(-1, input_ids.shape[-1]))  # [max len, batch size]
+        temp_my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])  # [batch size, max len]
 
-        batch_size = input_ids.shape[1]  # this should be 4*batch size
-        max_len = input_ids.shape[0]  # this should be max length
-        out_len = max(torch.sum(temp_attention_mask, dim=1)) # number of maximum masked tokens
+        batch_size = temp_input_ids.shape[1]  # this should be 4*batch size
+        max_len = temp_input_ids.shape[0]  # this should be max length
+        out_len = max(torch.sum(temp_my_attention_mask, dim=1)) # number of maximum masked tokens
         vocab_size = self.decoder.output_dim  # this should be the number of possible vocab words
 
         # tensor to store decoder outputs [max attention masks, batch size, vocab size]
         outputs = torch.rand((out_len, batch_size, vocab_size)).to(device)
-        # outputs = torch.rand((max_len, batch_size, vocab_size)).to(self.device)
+        # outputs = torch.rand((max_len, batch_size, vocab_size)).to(device)
 
         # last hidden state of the encoder is used as the initial hidden state of the decoder
-        hidden, cell = self.encoder(input_ids)
+        hidden, cell = self.encoder(temp_input_ids)
 
         # first input to the decoder is the <sos> tokens
-        input = input_ids[0, :]
+        input = temp_input_ids[0, :]
 
         # for t in trange(1, max_len):
         for t in range(1, max_len):
@@ -173,50 +173,70 @@ class Seq2Seq(nn.Module):
             # place predictions in a tensor holding predictions for each token
             # outputs[t] = output
             for j in range(batch_size):
-                if temp_attention_mask[j, t] == 0:
+                if temp_my_attention_mask[j, t] == 0:
                     continue
                 else:
-                    i = torch.sum(temp_attention_mask[j, :t])
+                    i = torch.sum(temp_my_attention_mask[j, :t])
                     outputs[i, j, :] = output[j, :]
 
             # decide if we are going to use teacher forcing or not
             # teacher_force = random.random() < teacher_forcing_ratio
 
             # get the true token to supply next
-            input = input_ids[t, :]
+            input = temp_input_ids[t, :]
 
         # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
         gs = gumbel_softmax(outputs, hard=True)
 
-        # should give dimension [max attention masks, 4*batch size, vocab size] with 0,1,2...,vocab size along the third dimension
-        input_indicators = torch.arange(0, gs.shape[2]).expand_as(gs)
-
-        # should give dimension [max attention masks, 4*batch size] with prediction of word token
-        summed = torch.sum(gs * input_indicators, dim=2)
-        assert torch.max(summed) <= vocab_size
-
-        # gives dimension [max length, batch size] with 0s at non masked tokens and new token at masked tokens
-        new_sentences = torch.zeros(*input_ids.shape)
-        for j in range(batch_size):
-            for k in range(max_len):
-                if temp_attention_mask[j, k] == 0:
-                    continue
+        # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
+        # one hot vectors are indicative of the word ids to be used by the classifier
+        onehots = torch.zeros((batch_size, max_len, vocab_size))
+        onehot = torch.FloatTensor(1, vocab_size)
+        for i in range(batch_size):
+            for j in range(max_len):
+                if temp_my_attention_mask[i, j] == 1:
+                    k = torch.sum(temp_my_attention_mask[i, :j])
+                    onehots[i, j, :] = gs[k, i, :]
                 else:
-                    i = torch.sum(temp_attention_mask[j, :k])
-                    new_sentences[k, j] = summed[i, j]
-        # new_sentences = summed*torch.t(temp_attention_mask)
+                    onehot.zero_()
+                    onehot.scatter_(1, torch.tensor([temp_input_ids[j, i]]).unsqueeze(0), 1)
+                    onehots[i, j, :] = onehot
+        # change to dimension [4*batch size*max length, vocab size] to make multiplying by embeddings in classifier easier
+        onehots = onehots.view(-1, onehots.shape[-1])
+        # change to sparse for memory savage...?? not sure if that actually helps
+        onehots = onehots.to_sparse()
 
-        # gives dimension [batch size, max length] with 0s at masked tokens and remaining tokens at non masked tokens
-        remaining_sentences = torch.t(input_ids) * (torch.ones(*temp_attention_mask.shape) - temp_attention_mask)
-
-        assert remaining_sentences.shape == torch.t(new_sentences).shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape, *torch.t(new_sentences).shape)
-
-        # adding gives new sentences with replaced tokens [batch size, max length]
-        out = remaining_sentences + torch.t(new_sentences)
+        # # should give dimension [max attention masks, 4*batch size, vocab size] with 0,1,2...,vocab size along the third dimension
+        # input_indicators = torch.arange(0, gs.shape[2]).expand_as(gs)
+        #
+        # # should give dimension [max attention masks, 4*batch size] with prediction of word token
+        # summed = torch.sum(gs * input_indicators, dim=2)
+        # assert torch.max(summed) <= vocab_size
+        #
+        # # gives dimension [max length, batch size] with 0s at non masked tokens and new token at masked tokens
+        # new_sentences = torch.zeros(*temp_input_ids.shape)
+        # for j in range(batch_size):
+        #     for k in range(max_len):
+        #         if temp_my_attention_mask[j, k] == 0:
+        #             continue
+        #         else:
+        #             i = torch.sum(temp_my_attention_mask[j, :k])
+        #             new_sentences[k, j] = summed[i, j]
+        # # new_sentences = summed*torch.t(temp_attention_mask)
+        #
+        # # gives dimension [batch size, max length] with 0s at masked tokens and remaining tokens at non masked tokens
+        # remaining_sentences = torch.t(temp_input_ids) * (torch.ones(*temp_my_attention_mask.shape) - temp_my_attention_mask)
+        #
+        # assert remaining_sentences.shape == torch.t(new_sentences).shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape, *torch.t(new_sentences).shape)
+        #
+        # # adding gives new sentences with replaced tokens [batch size, max length]
+        # out = remaining_sentences + torch.t(new_sentences)
 
         out_dict = {k: v for k,v in kwargs.items()}
         # reshape input ids to resemble known form
-        out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0]))
+        # out_dict['input_ids'] = out.view((-1, 4, input_ids.shape[0]))
+        out_dict['input_ids'] = input_ids
+        out_dict['input_embeds'] = onehots
 
         return out_dict
 
@@ -318,9 +338,7 @@ class MyAlbertForMaskedLM(nn.Module):
 
         assert remaining_sentences.shape == new_sentences.shape, 'shape of remaining is {} and new is {}'.format(*remaining_sentences.shape, *new_sentences.shape)
 
-        # adding gives new sentences with replaced tokens [batch size, max length]
-        out = remaining_sentences + new_sentences
-
+        # TODO should output a tensor of dimension [batch size, 4, max length, vocab size] with one hot vectos along the fourth dimension
         out_dict = {k: v for k, v in kwargs.items()}
         # reshape to resemble known form
         out_dict['input_ids'] = out.view(*input_ids.shape)
