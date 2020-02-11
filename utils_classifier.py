@@ -212,7 +212,7 @@ class MyAlbertForMultipleChoice(nn.Module):
                                   token_type_ids=token_type_ids,
                                   attention_mask=attention_mask)
 
-        classification_scores = outputs[0].to(device)
+        classification_scores = outputs[0]
 
         if labels is not None:
 
