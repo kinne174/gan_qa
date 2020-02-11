@@ -82,13 +82,17 @@ def feature_loader(args, tokenizer, examples):
         for ending, context in zip(ex.endings, ex.contexts):
             question_ending = ex.question + ' ' + ending
 
-            inputs = tokenizer.encode_plus(
-                question_ending,
-                context,
-                add_special_tokens=True,
-                truncation_strategy='only_second',
-                max_length=args.max_length
-            )
+            try:
+                inputs = tokenizer.encode_plus(
+                    question_ending,
+                    context,
+                    add_special_tokens=True,
+                    truncation_strategy='only_second',
+                    max_length=args.max_length
+                )
+            except AssertionError as err_msg:
+                logger.info('Assertion error at example id {}: {}'.format(ex_ind, err_msg))
+                continue
 
             if 'num_truncated_tokens' in inputs and inputs['num_truncated_tokens'] > 0:
                 logger.info('Truncating context for question id {}'.format(ex.example_id))
