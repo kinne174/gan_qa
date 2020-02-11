@@ -403,8 +403,8 @@ def main():
 
     if args.use_gpu:
         logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(args.device,
-                                                                                                           torch.cuda.memory_allocated(args.device),
-                                                                                                           torch.cuda.memory_cached(args.device)))
+                                                                                                           torch.cuda.memory_allocated(args.device)*1e-9,
+                                                                                                           torch.cuda.memory_cached(args.device)*1e-9))
         logger.info('The number of gpus available is {}'.format(torch.cuda.device_count()))
 
     # optimizers
