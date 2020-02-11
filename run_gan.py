@@ -270,7 +270,7 @@ def main():
                 self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
                 self.evaluate_during_training = False
-                self.cutoff = 50
+                self.cutoff = None
                 self.do_randomize = False
                 self.epochs = 3
                 self.learning_rate_classifier = 1e-4
@@ -283,7 +283,7 @@ def main():
                 self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
                 self.seed = 1234
-                self.max_length = 512
+                self.max_length = 256
                 self.batch_size = 5
                 self.do_lower_case = True
                 self.save_steps = 20
@@ -463,15 +463,15 @@ def main():
             # print('attention model')
             # print(list(attentionM.parameters())[0].grad)
             # print(torch.max(list(attentionM.parameters())[0].grad))
-            print('generator model')
-            for i in range(len(list(generatorM.parameters()))):
-                print(i)
-                print(list(generatorM.parameters())[i].grad)
-                # print(torch.max(list(generatorM.parameters())[i].grad))
-            print('classifier model')
-            for i in range(len(list(classifierM.parameters()))):
-                print(i)
-                print(list(classifierM.parameters())[i].grad)
+            # print('generator model')
+            # for i in range(len(list(generatorM.parameters()))):
+            #     print(i)
+            #     print(list(generatorM.parameters())[i].grad)
+            #     print(torch.max(list(generatorM.parameters())[i].grad))
+            # print('classifier model')
+            # for i in range(len(list(classifierM.parameters()))):
+            #     print(i)
+            #     print(list(classifierM.parameters())[i].grad)
             # print(torch.max(list(classifierM.parameters())[0].grad))
             # print('*****************************************************************')
             if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):

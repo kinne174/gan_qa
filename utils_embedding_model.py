@@ -72,6 +72,7 @@ def feature_loader(args, tokenizer, examples):
     if args.do_randomize:
         return randomize_feature_loader(examples)
 
+    break_flag = False
     all_features = []
     for ex_ind, ex in tqdm.tqdm(enumerate(examples), desc='Examples to Features'):
         if ex_ind % 1000 == 0:
@@ -92,7 +93,8 @@ def feature_loader(args, tokenizer, examples):
                 )
             except AssertionError as err_msg:
                 logger.info('Assertion error at example id {}: {}'.format(ex_ind, err_msg))
-                continue
+                break_flag = True
+                break
 
             if 'num_truncated_tokens' in inputs and inputs['num_truncated_tokens'] > 0:
                 logger.info('Truncating context for question id {}'.format(ex.example_id))
@@ -117,6 +119,10 @@ def feature_loader(args, tokenizer, examples):
             # the token_type_mask and attention_mask is the same so can just use token_type_mask twice
             choices_features.append((input_ids, input_mask, token_type_mask, token_type_mask))
 
+        if break_flag:
+            break_flag = False
+            continue
+
         if ex_ind == 0:
             logger.info('Instance of a Feature.\n input_ids are the transformations to the integers that the model understands\n'
                         'input_mask is 1 if there is a real word there and 0 for padding. \n'
@@ -127,7 +133,6 @@ def feature_loader(args, tokenizer, examples):
             logger.info('input_mask: {}'.format(' '.join(map(str, input_mask))))
             logger.info('token_type_mask: {}'.format(' '.join(map(str, token_type_mask))))
             logger.info('attention_mask: {}'.format(' '.join(map(str, token_type_mask))))
-
 
         all_features.append(ArcFeature(example_id=ex.example_id,
                                        choices_features=choices_features,
