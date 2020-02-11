@@ -305,6 +305,9 @@ def main():
     if not os.path.exists(args.data_dir):
         raise Exception('Data directory does not exist here ({})'.format(args.data_dir))
 
+    for arg, value in sorted(vars(args).items()):
+        logging.info("Argument {}: {}".format(arg, value))
+
     # Set seed
     set_seed(args)
 

@@ -19,7 +19,6 @@ def get_device():
 
 
 device = get_device()
-logger.info('Classifier device is {}'.format(device))
 
 
 class ClassifierConfig(PretrainedConfig):
@@ -67,11 +66,11 @@ class ClassifierNet(torch.nn.Module):
         return cls(config)
 
     def forward(self, input_ids, token_type_ids, attention_mask, labels, **kwargs):
-        if 'input_embeds' in kwargs:
+        if 'inputs_embeds' in kwargs:
             # embedding matrix should be of dimension [vocab size, embedding dimension]
             embeddings = self.embedding.weight.to(device)
             # input_embeds should be of dimension [4*batch size*max length, vocab size]
-            input_embeds = kwargs['input_embeds']
+            input_embeds = kwargs['inputs_embeds']
             assert input_embeds.is_sparse
             temp_input_ids = torch.sparse.mm(input_embeds, embeddings)
             temp_input_ids = temp_input_ids.view(*input_ids.shape, -1)
@@ -93,6 +92,7 @@ class ClassifierNet(torch.nn.Module):
 
 
 def flip_labels(labels, **kwargs):
+    logger.info('Classifier device is {}'.format(device))
     out_labels = torch.ones(*labels.shape).to(device) - labels
     out_dict = {k: v for k, v in kwargs.items() if not k in ['labels']}
     out_dict['labels'] = out_labels

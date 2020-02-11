@@ -19,7 +19,6 @@ def get_device():
 
 
 device = get_device()
-logger.info('Generator device is {}'.format(device))
 
 
 # from https://github.com/bentrevett/pytorch-seq2seq/blob/master/1%20-%20Sequence%20to%20Sequence%20Learning%20with%20Neural%20Networks.ipynb
@@ -107,6 +106,7 @@ class Decoder(nn.Module):
 # from https://discuss.pytorch.org/t/vae-gumbel-softmax/16838
 def sample_gumbel(shape, eps=1e-20):
     U = torch.Tensor(shape).uniform_(0, 1).to(device)
+    logger.info('Generator device is {}'.format(device))
     return -(torch.log(-torch.log(U + eps) + eps))
 
 def gumbel_softmax_sample(logits, temperature):
