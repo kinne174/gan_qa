@@ -19,6 +19,7 @@ def get_device():
 
 
 device = get_device()
+logger.info('Classifier device is {}'.format(device))
 
 
 class ClassifierConfig(PretrainedConfig):

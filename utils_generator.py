@@ -19,6 +19,7 @@ def get_device():
 
 
 device = get_device()
+logger.info('Generator device is {}'.format(device))
 
 
 # from https://github.com/bentrevett/pytorch-seq2seq/blob/master/1%20-%20Sequence%20to%20Sequence%20Learning%20with%20Neural%20Networks.ipynb
