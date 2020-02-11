@@ -261,9 +261,9 @@ def main():
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'albert'
+                self.generator_model_type = 'seq'
                 self.generator_model_name_or_path = 'albert-base-v2'
-                self.classifier_model_type = 'linear'
+                self.classifier_model_type = 'albert'
                 self.classifier_model_name_or_path = 'albert-base-v2'
                 self.attention_model_type = 'linear'
                 self.attnetion_model_name_or_path = None
@@ -401,10 +401,11 @@ def main():
     attentionM.to(args.device)
     classifierM.to(args.device)
 
-    if args.device == 'cuda':
+    if args.use_gpu:
         logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(args.device,
                                                                                                            torch.cuda.memory_allocated(args.device),
                                                                                                            torch.cuda.memory_cached(args.device)))
+        logger.info('The number of gpus available is {}'.format(torch.cuda.device_count()))
 
     # optimizers
     classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
@@ -435,12 +436,12 @@ def main():
 
             # this changes the 'my_attention_masks' input to highlight which words should be changed
             fake_inputs = attentionM(**inputs)
-            logger.info('Attention success')
+            logger.info('Attention success!')
 
             # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
             fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
             fake_inputs = generatorM(**fake_inputs)
-            logger.info('Generator success')
+            logger.info('Generator success!')
 
             # flip labels to represent the wrong answers are actually right
             fake_inputs = flip_labels(**fake_inputs)
