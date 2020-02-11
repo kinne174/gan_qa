@@ -17,6 +17,7 @@ def get_device():
     else:
         return torch.device('cpu')
 
+
 device = get_device()
 
 
@@ -126,6 +127,7 @@ def gumbel_softmax(logits, temperature=0.5, hard=False):
         y = (y_hard - y).detach() + y
     return y
 
+
 class Seq2Seq(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -186,11 +188,11 @@ class Seq2Seq(nn.Module):
             input = temp_input_ids[t, :]
 
         # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
-        gs = gumbel_softmax(outputs, hard=True)
+        gs = gumbel_softmax(outputs, hard=True).to(device)
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
-        onehots = torch.zeros((batch_size, max_len, vocab_size))
+        onehots = torch.zeros((batch_size, max_len, vocab_size)).to(device)
         onehot = torch.FloatTensor(1, vocab_size)
         for i in range(batch_size):
             for j in range(max_len):

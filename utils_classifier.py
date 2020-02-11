@@ -17,6 +17,7 @@ def get_device():
     else:
         return torch.device('cpu')
 
+
 device = get_device()
 
 
@@ -204,11 +205,11 @@ class MyAlbertForMultipleChoice(nn.Module):
 
             outputs = self.albert(token_type_ids=token_type_ids,
                                   attention_mask=attention_mask,
-                                  inputs_embeds=temp_inputs_embeds)
+                                  inputs_embeds=temp_inputs_embeds).to(device)
         else:
             outputs = self.albert(input_ids=input_ids.long(),
                                   token_type_ids=token_type_ids,
-                                  attention_mask=attention_mask)
+                                  attention_mask=attention_mask).to(device)
 
         classification_scores = outputs[0]
 
