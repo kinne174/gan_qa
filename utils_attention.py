@@ -5,29 +5,32 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.collocations import *
 import string
-from _collections import Counter
+from collections import Counter
+import logging
 
-from transformers import PreTrainedTokenizer
+from transformers import PreTrainedTokenizer, PretrainedConfig
+
+logger = logging.getLogger(__name__)
+
+# return if there is a gpu available
+def get_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    else:
+        return torch.device('cpu')
+
+
+device = get_device()
 
 
 class AttentionNet(torch.nn.Module):
 
-    def __init__(self):
+    def __init__(self, config):
         super(AttentionNet, self).__init__()
 
-        # self.in_features = config.in_features_attention
-        #
-        # self.linear1 = nn.Sequential(
-        #     nn.Linear(self.in_features, 124),
-        #     nn.BatchNorm1d(124),
-        #     nn.ReLU(inplace=True)
-        # )
-        #
-        # self.out = nn.Sequential(
-        #     nn.Linear(124, self.in_features),
-        #     nn.BatchNorm1d(self.in_features),
-        #     nn.Tanh()
-        # )
+    @classmethod
+    def from_pretrained(cls, config):
+        return cls(config)
 
     def forward(self, input_ids, my_attention_mask, **kwargs):
         # TODOfixed create a model to update my_attention_mask (only where it equals 1) and return all the rest unchanged
@@ -58,15 +61,16 @@ class AttentionPMI(nn.Module):
         self.tokenizer = config.tokenizer
         assert isinstance(self.tokenizer, PreTrainedTokenizer)
 
-        self.max_attention_masks = config.max_attention_masks
+        self.max_attention_words = config.max_attention_words
 
-        stop_words = list(stopwords.words('english'))
+        stop_words = ' '.join(list(stopwords.words('english')))
         stop_words_ids = self.tokenizer.encode(stop_words, add_special_tokens=False)
-        special_words_ids = [self.tokenizer.cls_token_id, self.tokenizer.pad_token_id, self.tokenizer.sep_token,
+        special_words_ids = [self.tokenizer.cls_token_id, self.tokenizer.unk_token_id, self.tokenizer.sep_token_id,
                              self.tokenizer.pad_token_id, self.tokenizer.mask_token_id]
-        punctuation_ids = self.tokenizer.encode(list(string.punctuation), add_special_tokens=False)
+        punctuation = ' '.join(list(string.punctuation))
+        punctuation_ids = self.tokenizer.encode(punctuation, add_special_tokens=False)
 
-        self.bad_ids = stop_words_ids + special_words_ids + punctuation_ids
+        self.bad_ids = set(stop_words_ids + special_words_ids + punctuation_ids)
 
         self.window_size = config.window_size
         self.bigram_measures = nltk.collocations.BigramAssocMeasures()
@@ -77,26 +81,17 @@ class AttentionPMI(nn.Module):
 
     def forward(self, input_ids, my_attention_mask, **kwargs):
 
-        # change from dimension [batch size, 4, max length] to [4*batch size, max length]
-        temp_my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])
-        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
-
-        assert temp_my_attention_mask.shape[0] % 4 == 0 and not temp_my_attention_mask.shape[0] == 0
-        assert temp_input_ids.shape[0] % 4 == 0 and not temp_input_ids.shape[0] == 0
-
-        out_my_attention_mask = torch.LongTensor(*my_attention_mask.shape)
+        out_my_attention_mask = torch.LongTensor(*my_attention_mask.shape).to(device)
         for i in range(input_ids.shape[0]):
             # creates a tensor of dimension [4, max length]
             current_input_ids = input_ids[i, :, :].squeeze()
 
             # retrieve index that the question ends, should be able to use :question_cutoff_ind to retrieve full question
-            touch = True
             for k in range(current_input_ids.shape[1]):
                 if current_input_ids[0, k] == current_input_ids[1, k] == current_input_ids[2, k] == current_input_ids[3, k]:
                     continue
-                if touch:
-                    touch = False
-                    question_cutoff_ind = k
+                question_cutoff_ind = k-1
+                break
 
             # retrieve unique question ids
             question_ids = list(set(current_input_ids[1, :question_cutoff_ind].tolist()))
@@ -111,22 +106,21 @@ class AttentionPMI(nn.Module):
             context_ids = [current_input_ids[j, answer_cutoff_inds[j]:context_cutoff_inds[j]].tolist() for j in range(current_input_ids.shape[0])]
 
             # delete stop words, punctuation and special tokenizer tokens
-            question_ids = [qi for qi in question_ids if not qi in self.bad_ids]
-            answer_ids = [[ai for ai in sub_answer_ids if not ai in self.bad_ids] for sub_answer_ids in answer_ids]
-            # TODO should I be deleting stop words here? If I'm using a word window in the next step?
-            context_ids = [[ci for ci in sub_context_ids if not ci in self.bad_ids] for sub_context_ids in context_ids]
+            question_ids = [qi for qi in question_ids if qi not in self.bad_ids]
+            answer_ids = [[ai for ai in sub_answer_ids if ai not in self.bad_ids] for sub_answer_ids in answer_ids]
 
             # save index of ids in tensor for creating the outputted my_attention_mask, use a tuple of (index, id), needed for context only
-            # question_ids_tups = [(qi, ind) for ind, qi in enumerate(question_ids)]
-            # answer_ids_tups = [[(ai, ind + question_cutoff_ind) for ind, ai in enumerate(sub_answer_ids)] for sub_answer_ids in answer_ids]
             context_ids_tups = [[(ci, ind + question_cutoff_ind + answer_cutoff_inds[j]) for ind, ci in enumerate(sub_context_ids)] for j, sub_context_ids in enumerate(context_ids)]
+
+            # TODO should I be deleting stop words here? If I'm using a word window in the next step?
+            # context_ids = [[ci for ci in sub_context_ids if ci not in self.bad_ids] for sub_context_ids in context_ids]
 
             # do a double for loop over each word-pair in question and answer to find words with the largest PMI
 
             # temporary tensor of dimension [4, max length] to hold output masks for all options in current question
-            sub_out_my_attention_mask = torch.LongTensor(*current_input_ids.shape)
+            sub_out_my_attention_mask = torch.LongTensor(*current_input_ids.shape).to(device)
 
-            for ii, sub_answer_ids, (sub_context_ids, sub_context_ids_tups) in enumerate(zip(answer_ids, context_ids, context_ids_tups)):
+            for ii, (sub_answer_ids, sub_context_ids, sub_context_ids_tups) in enumerate(zip(answer_ids, context_ids, context_ids_tups)):
 
                 # initialize different matrices for answer and question just in case a word is not seen in the context it won't affect its bigram pair's score
                 PMI_matrix_a = torch.ones((len(sub_answer_ids), len(question_ids)))
@@ -139,7 +133,7 @@ class AttentionPMI(nn.Module):
                 finder = BigramCollocationFinder.from_words(sub_context_ids, window_size=self.window_size)
 
                 # tempororary tensor of dimension [max length] to hold individual attention masks of question/answer/contexts
-                sub_my_attention = torch.LongTensor(temp_my_attention_mask.shape[-1],)
+                sub_my_attention = torch.LongTensor(current_input_ids.shape[-1],).to(device)
 
                 for a_ind, ai in enumerate(sub_answer_ids):
                     for q_ind, qi in enumerate(question_ids):
@@ -147,65 +141,47 @@ class AttentionPMI(nn.Module):
                             # this shouldn't add or subtract from the score of this word
                             continue
 
-                        # count number of instances of each word in the context
-                        p_ai = context_counter[ai]
-                        p_qi = context_counter[qi]
-
                         # don't pick one of these words as it doesn't appear in the context
-                        if p_ai == 0:
+                        if ai not in context_counter:
                             PMI_matrix_a[a_ind, q_ind] = -100
                             continue
-                        if p_qi == 0:
+                        if qi not in context_counter:
                             PMI_matrix_q[q_ind, a_ind] = -100
                             continue
 
                         # find bi gram score within a window
                         p_ai_qi = finder.score_ngram(self.bigram_measures.pmi, ai, qi)
+                        p_ai_qi = 0 if p_ai_qi is None else 2**p_ai_qi  # 2 because nltk uses log2
 
                         # assign PMI to each matrix
-                        PMI_matrix_a[a_ind, q_ind] = p_ai_qi/(p_ai*p_qi)
-                        PMI_matrix_q[q_ind, a_ind] = p_ai_qi/(p_ai*p_qi)
+                        PMI_matrix_a[a_ind, q_ind] = p_ai_qi
+                        PMI_matrix_q[q_ind, a_ind] = p_ai_qi
 
                 # find average over the columns for each matrix
                 # be tensors of dimension [len(sub_answer_ids)] and [len(question_ids)] respectively
-                PMI_average_a = torch.mean(PMI_matrix_a, dim=1).squeeze()
-                PMI_average_q = torch.mean(PMI_matrix_q, dim=1).squeeze()
+                PMI_average_a = torch.mean(PMI_matrix_a, dim=1)
+                PMI_average_q = torch.mean(PMI_matrix_q, dim=1)
 
                 # combine and find indices of largest PMI score from left to right
                 # both should be tensors of dimension [len(sub_answer_ids) + len(question_ids)]
                 PMI_average = torch.cat((PMI_average_q, PMI_average_a), dim=0)
-                PMI_indices = torch.argsort(PMI_average)
+                PMI_indices = torch.argsort(PMI_average, descending=True)
 
                 # concatenating list of question and answer ids similar to above
                 question_answer_ids = question_ids + sub_answer_ids
 
                 # keep track of how many words will be masked in context and the words selected to be masked
-                attention_word_count = 0
-                masked_context_words = []
+                masked_context_ids = []
 
-                for max_ind in PMI_indices:
-                    # cycle through max words until greater than user provided max_attention_masks
+                for max_ind in PMI_indices[:self.max_attention_words]:
+                    # cycle through max words for number of unique words to mask
                     max_word = question_answer_ids[max_ind.item()]
-                    count_in_context = context_counter[max_word]
-
-                    if attention_word_count == 0:
-                        # make sure at least one unique word is masked
-                        attention_word_count += count_in_context
-                        masked_context_words.append(max_word)
-                        continue
-
-                    if attention_word_count + count_in_context >= self.max_attention_masks:
-                        # don't add this word and just exit for loop
-                        break
-
-                    # add words to be masked
-                    attention_word_count += count_in_context
-                    masked_context_words.append(max_word)
+                    masked_context_ids.append(max_word)
 
                 # find which indices to mask based on the tuples of context words and context indices
                 # indices should be in relation to the [0,.., max length]
                 # no set size for this tensor
-                indices_to_mask = torch.tensor([c_tup[0] for c_tup in sub_context_ids_tups if c_tup[1] in masked_context_words], dtype=torch.long)  # might need to make this 2D
+                indices_to_mask = torch.tensor([c_tup[1] for c_tup in sub_context_ids_tups if c_tup[0] in masked_context_ids], dtype=torch.long)  # might need to make this 2D
 
                 # place ones in the positions to mask
                 sub_my_attention.zero_()
@@ -228,8 +204,23 @@ class AttentionPMI(nn.Module):
 
         return out_dict
 
+class AttentionConfig(PretrainedConfig):
+    def __init__(self, **kwargs):
+        super(AttentionConfig, self).__init__()
 
-attention_models = {
-    'linear': AttentionNet,
-    'PMI': AttentionPMI,
+        for key, value in kwargs.items():
+            try:
+                setattr(self, key, value)
+            except AttributeError as err:
+                logger.error("Can't set {} with value {} for {}".format(key, value, self))
+                raise err
+
+    @classmethod
+    def from_pretrained(cls, **kwargs):
+        return cls(**kwargs)
+
+
+attention_models_and_config_classes = {
+    'random': (AttentionConfig, AttentionNet),
+    'PMI': (AttentionConfig, AttentionPMI),
 }

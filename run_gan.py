@@ -14,20 +14,11 @@ from sklearn.metrics import accuracy_score
 
 from transformers import (BertTokenizer, RobertaTokenizer, DistilBertTokenizer, AlbertTokenizer)
 
-
-if getpass.getuser() == 'Mitch':
-    from utils_real_data import example_loader
-    from utils_attention import attention_models
-    from utils_embedding_model import feature_loader, load_features, save_features
-    from utils_classifier import classifier_models_and_config_classes, flip_labels
-    from utils_generator import generator_models_and_config_classes
-else:
-    from utils_real_data import example_loader
-    from utils_attention import attention_models
-    from utils_embedding_model import feature_loader, load_features, save_features
-    from utils_classifier import classifier_models_and_config_classes, flip_labels
-    from utils_generator import generator_models_and_config_classes
-
+from utils_real_data import example_loader
+from utils_attention import attention_models_and_config_classes
+from utils_embedding_model import feature_loader, load_features, save_features
+from utils_classifier import classifier_models_and_config_classes, flip_labels
+from utils_generator import generator_models_and_config_classes
 
 # logging
 logger = logging.getLogger(__name__)
@@ -206,7 +197,7 @@ def main():
                         help='Name of the classifier model to use')
     parser.add_argument('--classifier_model_name_or_path', default=None, type=str,
                         help='Name or path to classifier model.')
-    parser.add_argument('--attention_model_type', default='linear', type=str,
+    parser.add_argument('--attention_model_type', default='PMI', type=str,
                         help='Name of attention model to use')
     parser.add_argument('--attention_model_name_or_path', default=None, type=str,
                         help='Name or path to attention model.')
@@ -224,6 +215,10 @@ def main():
                         help='Randomize input')
     parser.add_argument('--do_lower_case', action='store_true',
                         help='Tokenizer converts everything to lower case')
+    parser.add_argument('--attention_window_size', type=int, default=10,
+                        help='The window which to search for bigrams in the PMI attention network')
+    parser.add_argument('--max_attention_words', type=int, default=3,
+                        help='Maximum number of unique words to mask in attention newtworks')
 
     parser.add_argument('--epochs', default=3, type=int,
                         help='Number of epochs to run training')
@@ -266,11 +261,11 @@ def main():
                 self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'albert'
                 self.classifier_model_name_or_path = 'albert-base-v2'
-                self.attention_model_type = 'linear'
+                self.attention_model_type = 'PMI'
                 self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
                 self.evaluate_during_training = False
-                self.cutoff = None
+                self.cutoff = 50
                 self.do_randomize = False
                 self.epochs = 3
                 self.learning_rate_classifier = 1e-4
@@ -283,10 +278,12 @@ def main():
                 self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
                 self.seed = 1234
-                self.max_length = 256
+                self.max_length = 512
                 self.batch_size = 5
                 self.do_lower_case = True
                 self.save_steps = 20
+                self.attention_window_size = 10
+                self.max_attention_words = 3
 
         args = Args()
 
@@ -329,7 +326,14 @@ def main():
 
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
+    attention_config_class, attention_model_class = attention_models_and_config_classes[args.attention_model_type]
 
+    attention_config_dicts = {'PMI': {'tokenizer': tokenizer,
+                                      'window_size': args.attention_window_size,
+                                      'max_attention_words': args.max_attention_words,
+                                      },
+                              'random': {}
+                              }
     generator_config_dicts = {'seq': {'pretrained_model_name_or_path': 'seq',
                                       'input_dim': tokenizer.vocab_size,
                                       },
@@ -358,9 +362,13 @@ def main():
                                }
 
     logger.info('Establishing config classes.')
+    attention_config = attention_config_class.from_pretrained(**attention_config_dicts[args.attention_model_type])
     generator_config = generator_config_class.from_pretrained(**generator_config_dicts[args.generator_model_type])
     classifier_config = classifier_config_class.from_pretrained(**classifier_config_dicts[args.classifier_model_type])
 
+    attention_model_dicts = {'PMI': {'config': attention_config},
+                             'random': {}
+                             }
     generator_model_dicts = {'seq': {'config': generator_config},
                               'bert': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
                                        'config': generator_config},
@@ -383,13 +391,9 @@ def main():
                               }
 
     logger.info('Establishing model classes')
+    attentionM = attention_model_class.from_pretrained(**attention_model_dicts[args.attention_model_type])
     generatorM = generator_model_class.from_pretrained(**generator_model_dicts[args.generator_model_type])
     classifierM = classifier_model_class.from_pretrained(**classifier_model_dicts[args.classifier_model_type])
-
-    # create network instances and initialize weights
-    # generatorM = generator_models[generator_name](config)  # input features
-    attentionM = attention_models[args.attention_model_type]()  # input features
-    # classifierM = classifier_models[classifier_name](config)  # input features, num choices
 
     # apply initial weights
     generatorM.apply(init_weights)
@@ -598,5 +602,5 @@ if __name__ == '__main__':
     main()
 
 # TODO one isssue with this is I need to code up how to handle non pytorch models since they won't work with optimizer/loss functionality
-# combinations that work: seq to linear, albert to linear,
-# combinations that do not work: seq to albert, albert to albert
+# max length 512 batch size 2
+# max length 256 batch size 5
