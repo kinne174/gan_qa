@@ -201,18 +201,14 @@ def main():
                         help='Name of attention model to use')
     parser.add_argument('--attention_model_name_or_path', default=None, type=str,
                         help='Name or path to attention model.')
-    parser.add_argument('--batch_size', type=int, default=50,
+    parser.add_argument('--batch_size', type=int, default=5,
                         help='Size of each batch to be used in training')
     parser.add_argument('--max_length', type=int, default=512,
                         help='The maximum length of the sequences allowed. This will induce cutting off or padding')
     parser.add_argument('--evaluate_during_training', action='store_true',
                         help='After each epoch test model on evaluation set')
-    parser.add_argument('--evaluate_during_training_steps', type=int, default=25,
-                        help='Evaluate during training each time after this many steps')
     parser.add_argument('--cutoff', type=int, default=None,
                         help='Stop example collection at this number')
-    parser.add_argument('--do_randomize', action='store_true',
-                        help='Randomize input')
     parser.add_argument('--do_lower_case', action='store_true',
                         help='Tokenizer converts everything to lower case')
     parser.add_argument('--attention_window_size', type=int, default=10,
@@ -266,7 +262,6 @@ def main():
                 self.transformer_name = 'albert'
                 self.evaluate_during_training = False
                 self.cutoff = 50
-                self.do_randomize = False
                 self.epochs = 3
                 self.learning_rate_classifier = 1e-4
                 self.learning_rate_generator = 1e-4
@@ -440,8 +435,9 @@ def main():
             generatorM.train()
             # attentionM.train()
 
-            # this changes the 'my_attention_masks' input to highlight which words should be changed
-            fake_inputs = attentionM(**inputs)
+            with torch.no_grad():
+                # this changes the 'my_attention_masks' input to highlight which words should be changed
+                fake_inputs = attentionM(**inputs)
             logger.info('Attention success!')
 
             # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier

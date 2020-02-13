@@ -199,8 +199,8 @@ class AttentionPMI(nn.Module):
 
         out_dict = {k: v for k, v in kwargs.items()}
 
-        out_dict['input_ids'] = input_ids
-        out_dict['my_attention_mask'] = out_my_attention_mask
+        out_dict['input_ids'] = input_ids.detach()
+        out_dict['my_attention_mask'] = out_my_attention_mask.detach()
 
         return out_dict
 
