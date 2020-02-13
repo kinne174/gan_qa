@@ -477,7 +477,8 @@ def main():
             if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
                 raise Exception('There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(epoch, iterate))
             if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
-                raise Exception('There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+                logger.warning('There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+                # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 
             # Update generatorM parameters
             generatorO.step()
@@ -527,7 +528,8 @@ def main():
             if all([list(classifierM.parameters())[i].grad is None for i in range(len(list(classifierM.parameters())))]):
                 raise Exception('There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(epoch, iterate))
             if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
-                raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
+                logger.warning('There are some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
+                # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
             # update classifier parameters
             classifierO.step()
@@ -544,7 +546,7 @@ def main():
 
             # log error for this step
             logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
-            logger.info('The classfier error is {}'.format(round(errorD.detach().item(), 3)))
+            logger.info('The classifier error is {}'.format(round(errorD.detach().item(), 3)))
 
             # save models in cache dir
             if (epoch*args.batch_size + iterate + 1) % args.save_steps == 0 and args.save_steps > 0:
