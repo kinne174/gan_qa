@@ -99,32 +99,6 @@ def flip_labels(labels, **kwargs):
     return out_dict
 
 
-def randomize_classifier(features, model=None, labels=None):
-
-    if model is None or labels is None:
-        return torch.rand((1,)).item(), torch.randn((len(features), 4))
-    else:
-        input_ids = []
-        # labels = torch.tensor(labels, dtype=torch.float)
-        for f in features:
-            assert isinstance(f, ArcFeature)
-
-            cf = f.choices_features
-            input_ids.extend([d['input_ids'] for d in cf])
-
-        input_ids = torch.tensor(input_ids, dtype=torch.float)
-
-        inputs = {'x': input_ids,
-                  'labels': labels}
-
-        return model(**inputs)  # can use ** with dict input
-
-
-def classifier(features, model, labels, randomize=False):
-    if randomize:
-        return randomize_classifier(features, model, labels)
-
-
 class AlbertForMultipleChoice(AlbertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -187,8 +161,6 @@ class MyAlbertForMultipleChoice(nn.Module):
         super(MyAlbertForMultipleChoice, self).__init__()
         self.albert = AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config)
 
-        # self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
-        self.word_embeddings = self.albert.albert.embeddings.word_embeddings.weight
         self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
 
     @classmethod
@@ -198,7 +170,7 @@ class MyAlbertForMultipleChoice(nn.Module):
     def forward(self, input_ids, attention_mask, token_type_ids, labels, **kwargs):
 
         if 'inputs_embeds' in kwargs:
-            embeddings = self.albert.albert.embeddings.word_embeddings.weight
+            embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(device)
             inputs_embeds = kwargs['inputs_embeds']
             assert inputs_embeds.is_sparse
             temp_inputs_embeds = torch.sparse.mm(inputs_embeds, embeddings)
@@ -249,7 +221,6 @@ class MyBertForMultipleChoice(nn.Module):
             return classification_scores, loss
 
         return classification_scores, None
-
 
 
 classifier_models_and_config_classes = {

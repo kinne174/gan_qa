@@ -52,9 +52,6 @@ def randomize_example_loader(cutoff):
 
 def example_loader(args, subset):
     # returns an object of type ArcExample similar to hugging face transformers
-    if args.do_randomize:
-        return randomize_example_loader(args.cutoff)
-
     all_examples = []
     data_filename = os.path.join(args.data_dir, '{}.jsonl'.format(subset))
     with open(data_filename, 'r') as file:

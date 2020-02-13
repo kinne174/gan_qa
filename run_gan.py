@@ -255,7 +255,7 @@ def main():
                 self.tokenizer_name = 'albert-base-v2'
                 self.generator_model_type = 'seq'
                 self.generator_model_name_or_path = 'albert-base-v2'
-                self.classifier_model_type = 'albert'
+                self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = 'albert-base-v2'
                 self.attention_model_type = 'PMI'
                 self.attnetion_model_name_or_path = None
@@ -273,8 +273,8 @@ def main():
                 self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
                 self.seed = 1234
-                self.max_length = 512
-                self.batch_size = 5
+                self.max_length = 256
+                self.batch_size = 1
                 self.do_lower_case = True
                 self.save_steps = 20
                 self.attention_window_size = 10

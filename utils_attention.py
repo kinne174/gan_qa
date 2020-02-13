@@ -107,19 +107,19 @@ class AttentionPMI(nn.Module):
 
             # delete stop words, punctuation and special tokenizer tokens
             question_ids = [qi for qi in question_ids if qi not in self.bad_ids]
-            answer_ids = [[ai for ai in sub_answer_ids if ai not in self.bad_ids] for sub_answer_ids in answer_ids]
+            answer_ids_temp = [[ai for ai in sub_answer_ids if ai not in self.bad_ids] for sub_answer_ids in answer_ids]
+            answer_ids = [ai_t if len(ai_t) != 0 else ai for ai_t, ai in zip(answer_ids_temp, answer_ids)]
 
             # save index of ids in tensor for creating the outputted my_attention_mask, use a tuple of (index, id), needed for context only
-            context_ids_tups = [[(ci, ind + question_cutoff_ind + answer_cutoff_inds[j]) for ind, ci in enumerate(sub_context_ids)] for j, sub_context_ids in enumerate(context_ids)]
+            context_ids_tups = [[(ci, ind + answer_cutoff_inds[j] + 1) for ind, ci in enumerate(sub_context_ids)] for j, sub_context_ids in enumerate(context_ids)]
 
             # TODO should I be deleting stop words here? If I'm using a word window in the next step?
             # context_ids = [[ci for ci in sub_context_ids if ci not in self.bad_ids] for sub_context_ids in context_ids]
 
-            # do a double for loop over each word-pair in question and answer to find words with the largest PMI
-
             # temporary tensor of dimension [4, max length] to hold output masks for all options in current question
             sub_out_my_attention_mask = torch.LongTensor(*current_input_ids.shape).to(device)
 
+            # do a double for loop over each word-pair in question and answer to find words with the largest PMI
             for ii, (sub_answer_ids, sub_context_ids, sub_context_ids_tups) in enumerate(zip(answer_ids, context_ids, context_ids_tups)):
 
                 # initialize different matrices for answer and question just in case a word is not seen in the context it won't affect its bigram pair's score

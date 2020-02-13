@@ -254,8 +254,9 @@ class MyAlbertForMaskedLM(nn.Module):
         max_len = temp_input_ids.shape[1]  # this should be max length
         out_len = max(torch.sum(temp_my_attention_mask, dim=1))  # number of maximum masked tokens
 
+        assert temp_input_ids.dtype == torch.long
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
-        albert_outputs = self.albert(input_ids=temp_input_ids.long(),
+        albert_outputs = self.albert(input_ids=temp_input_ids,
                                       attention_mask=temp_attention_mask,
                                       token_type_ids=temp_token_type_ids)
         # albert_outputs = [torch.rand((4*batch_size, max_len, 30000)).to(device)]
@@ -281,7 +282,7 @@ class MyAlbertForMaskedLM(nn.Module):
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
         onehots = torch.zeros((batch_size, max_len, vocab_size)).to(device)
-        onehot = torch.FloatTensor(1, vocab_size)
+        onehot = torch.FloatTensor(1, vocab_size).to(device)
         for i in range(batch_size):
             for j in range(max_len):
                 if temp_my_attention_mask[i, j] == 1:

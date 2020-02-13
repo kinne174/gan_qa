@@ -68,10 +68,6 @@ def randomize_feature_loader(examples):
 
 def feature_loader(args, tokenizer, examples):
     # returns a list of objects of type ArcFeature similar to hugging face transformers
-
-    if args.do_randomize:
-        return randomize_feature_loader(examples)
-
     break_flag = False
     all_features = []
     for ex_ind, ex in tqdm.tqdm(enumerate(examples), desc='Examples to Features'):
