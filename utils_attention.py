@@ -123,8 +123,8 @@ class AttentionPMI(nn.Module):
             for ii, (sub_answer_ids, sub_context_ids, sub_context_ids_tups) in enumerate(zip(answer_ids, context_ids, context_ids_tups)):
 
                 # initialize different matrices for answer and question just in case a word is not seen in the context it won't affect its bigram pair's score
-                PMI_matrix_a = torch.ones((len(sub_answer_ids), len(question_ids)))
-                PMI_matrix_q = torch.ones((len(question_ids), len(sub_answer_ids)))
+                PMI_matrix_a = torch.ones((len(sub_answer_ids), len(question_ids))).to(device)
+                PMI_matrix_q = torch.ones((len(question_ids), len(sub_answer_ids))).to(device)
 
                 # for the denominator initialize a counter of the context words
                 context_counter = Counter(sub_context_ids)
@@ -181,7 +181,7 @@ class AttentionPMI(nn.Module):
                 # find which indices to mask based on the tuples of context words and context indices
                 # indices should be in relation to the [0,.., max length]
                 # no set size for this tensor
-                indices_to_mask = torch.tensor([c_tup[1] for c_tup in sub_context_ids_tups if c_tup[0] in masked_context_ids], dtype=torch.long)  # might need to make this 2D
+                indices_to_mask = torch.tensor([c_tup[1] for c_tup in sub_context_ids_tups if c_tup[0] in masked_context_ids], dtype=torch.long).to(device)  # might need to make this 2D
 
                 # place ones in the positions to mask
                 sub_my_attention.zero_()
