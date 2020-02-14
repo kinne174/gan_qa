@@ -554,7 +554,7 @@ def main():
                 output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(epoch*args.batch_size + iterate + 1))
                 if not os.path.exists(output_dir_generator):
                     os.makedirs(output_dir_generator)
-                generator_model_to_save = generatorM
+                generator_model_to_save = generatorM.module if hasattr(generatorM, 'module') else generatorM
                 if hasattr(generator_model_to_save, 'save_pretrained'):
                     generator_model_to_save.save_pretrained(output_dir_generator)
                     logger.info('Saving generator model checkpoint to {}'.format(output_dir_generator))
@@ -564,10 +564,10 @@ def main():
                 output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(epoch*args.batch_size + iterate + 1))
                 if not os.path.exists(output_dir_classifier):
                     os.makedirs(output_dir_classifier)
-                classifier_model_to_save = classifierM
+                classifier_model_to_save = classifierM.module if hasattr(classifierM, 'module') else classifierM
                 if hasattr(classifier_model_to_save, 'save_pretrained'):
-                    logger.info('Saving classifier model checkpoint to {}'.format(output_dir_classifier))
                     classifier_model_to_save.save_pretrained(output_dir_classifier)
+                    logger.info('Saving classifier model checkpoint to {}'.format(output_dir_classifier))
                 else:
                     logger.info('Not saving classifier model.')
 
