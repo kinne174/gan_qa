@@ -52,6 +52,11 @@ def randomize_example_loader(cutoff):
 
 def example_loader(args, subset):
     # returns an object of type ArcExample similar to hugging face transformers
+
+    # bad ids, each has at least one answer that does not contain any context
+    # if another question answer task is used this will need to be fixed
+    bad_ids = ['OBQA_9-737', 'OBQA_45', 'OBQA_750', 'OBQA_7-423', 'OBQA_619', 'OBQA_9-778', 'OBQA_10-201', 'OBQA_10-791', 'OBQA_10-1138', 'OBQA_12-717', 'OBQA_13-129', 'OBQA_13-468', 'OBQA_13-957', 'OBQA_14-10', 'OBQA_14-949', 'OBQA_14-1140', 'OBQA_14-1274']
+
     all_examples = []
     data_filename = os.path.join(args.data_dir, '{}.jsonl'.format(subset))
     with open(data_filename, 'r') as file:
@@ -64,6 +69,9 @@ def example_loader(args, subset):
 
             id = line['id']
 
+            if id in bad_ids:
+                continue
+
             # if the number of options is not equal to 4 update the logger and skip it, all of the formatting works with
             # 4 options, maybe can update in the future to put a dummy one there or set the probability to 0 that it is
             # selected as correct later
@@ -71,8 +79,6 @@ def example_loader(args, subset):
                 logger.info('Question id {} did not contain four options. Skipped it.'.format(id))
                 continue
 
-            # from huggingface, there is apparently some questions that have ABCD so just want to see if that's the case
-            # as I haven't run into it yet personally
             label = line['answerKey']
             if label not in '1234':
                 if label not in 'ABCD':

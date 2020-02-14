@@ -123,8 +123,8 @@ class AttentionPMI(nn.Module):
             for ii, (sub_answer_ids, sub_context_ids, sub_context_ids_tups) in enumerate(zip(answer_ids, context_ids, context_ids_tups)):
 
                 # initialize different matrices for answer and question just in case a word is not seen in the context it won't affect its bigram pair's score
-                PMI_matrix_a = torch.ones((len(sub_answer_ids), len(question_ids))).to(device)
-                PMI_matrix_q = torch.ones((len(question_ids), len(sub_answer_ids))).to(device)
+                PMI_matrix_a = torch.zeros((len(sub_answer_ids), len(question_ids))).to(device)
+                PMI_matrix_q = torch.zeros((len(question_ids), len(sub_answer_ids))).to(device)
 
                 # for the denominator initialize a counter of the context words
                 context_counter = Counter(sub_context_ids)
@@ -135,37 +135,42 @@ class AttentionPMI(nn.Module):
                 # tempororary tensor of dimension [max length] to hold individual attention masks of question/answer/contexts
                 sub_my_attention = torch.LongTensor(current_input_ids.shape[-1],).to(device)
 
-                for a_ind, ai in enumerate(sub_answer_ids):
-                    for q_ind, qi in enumerate(question_ids):
-                        if ai == qi:
-                            # this shouldn't add or subtract from the score of this word
-                            continue
+                # TODO if none of the answer words are in the context then PMI_matrix_q should be a count of the words in the context, similar for question words
+                if all([ai not in context_counter for ai in sub_answer_ids]):
+                    PMI_matrix_q = torch.tensor([context_counter[qi] for qi in question_ids], dtype=torch.float).unsqueeze(1)
+                    PMI_matrix_a = torch.zeros((len(sub_answer_ids), 1))
 
-                        # don't pick one of these words as it doesn't appear in the context
-                        if ai not in context_counter:
-                            PMI_matrix_a[a_ind, q_ind] = -100
-                            continue
-                        if qi not in context_counter:
-                            PMI_matrix_q[q_ind, a_ind] = -100
-                            continue
+                else:
+                    for a_ind, ai in enumerate(sub_answer_ids):
+                        for q_ind, qi in enumerate(question_ids):
+                            if ai == qi:
+                                # this shouldn't add or subtract from the score of this word
+                                continue
 
-                        # find bi gram score within a window
-                        p_ai_qi = finder.score_ngram(self.bigram_measures.pmi, ai, qi)
-                        p_ai_qi = 0 if p_ai_qi is None else 2**p_ai_qi  # 2 because nltk uses log2
+                            # don't pick one of these words as it doesn't appear in the context
+                            if ai not in context_counter:
+                                PMI_matrix_a[a_ind, q_ind] = 0
+                            if qi not in context_counter:
+                                PMI_matrix_q[q_ind, a_ind] = 0
+                                continue
 
-                        # assign PMI to each matrix
-                        PMI_matrix_a[a_ind, q_ind] = p_ai_qi
-                        PMI_matrix_q[q_ind, a_ind] = p_ai_qi
+                            # find bi gram score within a window
+                            p_ai_qi = finder.score_ngram(self.bigram_measures.pmi, ai, qi)
+                            p_ai_qi = 0 if p_ai_qi is None else 2**p_ai_qi  # 2 because nltk uses log2
 
-                # find average over the columns for each matrix
+                            # assign PMI to each matrix
+                            PMI_matrix_a[a_ind, q_ind] = p_ai_qi
+                            PMI_matrix_q[q_ind, a_ind] = p_ai_qi
+
+                # find max over the columns for each matrix
                 # be tensors of dimension [len(sub_answer_ids)] and [len(question_ids)] respectively
-                PMI_average_a = torch.mean(PMI_matrix_a, dim=1)
-                PMI_average_q = torch.mean(PMI_matrix_q, dim=1)
+                PMI_max_a, _ = torch.max(PMI_matrix_a, dim=1)
+                PMI_max_q, _ = torch.max(PMI_matrix_q, dim=1)
 
                 # combine and find indices of largest PMI score from left to right
                 # both should be tensors of dimension [len(sub_answer_ids) + len(question_ids)]
-                PMI_average = torch.cat((PMI_average_q, PMI_average_a), dim=0)
-                PMI_indices = torch.argsort(PMI_average, descending=True)
+                PMI_max = torch.cat((PMI_max_q, PMI_max_a), dim=0)
+                PMI_indices = torch.argsort(PMI_max, descending=True)
 
                 # concatenating list of question and answer ids similar to above
                 question_answer_ids = question_ids + sub_answer_ids
@@ -177,6 +182,12 @@ class AttentionPMI(nn.Module):
                     # cycle through max words for number of unique words to mask
                     max_word = question_answer_ids[max_ind.item()]
                     masked_context_ids.append(max_word)
+
+                # if the number of unique words from the answer and questions is less than the max_attention_words
+                # provided by the user then add in the appropriate amount randomly from the context
+                num_words_found_in_context = PMI_max.nonzero().shape[0]
+                if num_words_found_in_context < self.max_attention_words:
+                    masked_context_ids.append(np.random.choice(list(context_counter.keys()), self.max_attention_words - num_words_found_in_context, replace=False).tolist())
 
                 # find which indices to mask based on the tuples of context words and context indices
                 # indices should be in relation to the [0,.., max length]
