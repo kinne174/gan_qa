@@ -242,6 +242,9 @@ class MyAlbertForMaskedLM(nn.Module):
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
 
+    def save_pretrained(self, save_directory):
+        self.albert.save_pretrained(save_directory)
+
     def forward(self, input_ids, my_attention_mask, attention_mask, token_type_ids, **kwargs):
 
         # change from dimension [batch size, 4, max length] to [4*batch size, max length]
