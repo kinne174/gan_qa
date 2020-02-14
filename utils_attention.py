@@ -135,10 +135,18 @@ class AttentionPMI(nn.Module):
                 # tempororary tensor of dimension [max length] to hold individual attention masks of question/answer/contexts
                 sub_my_attention = torch.LongTensor(current_input_ids.shape[-1],).to(device)
 
-                # TODO if none of the answer words are in the context then PMI_matrix_q should be a count of the words in the context, similar for question words
-                if all([ai not in context_counter for ai in sub_answer_ids]):
+                # TODOfixed if none of the answer words are in the context then PMI_matrix_q should be a count of the words in the context, similar for question words
+                if all([ai not in context_counter for ai in sub_answer_ids]) and all([qi not in context_counter for qi in question_ids]):
+                    PMI_matrix_a = torch.zeros((max(len(sub_answer_ids), 1), 1))  # to account for no answer ids in context
+                    PMI_matrix_q = torch.zeros((max(len(question_ids), 1), 1))
+
+                elif all([ai not in context_counter for ai in sub_answer_ids]):
+                    PMI_matrix_a = torch.zeros((max(len(sub_answer_ids), 1), 1))  # to account for no answer ids in context
                     PMI_matrix_q = torch.tensor([context_counter[qi] for qi in question_ids], dtype=torch.float).unsqueeze(1)
-                    PMI_matrix_a = torch.zeros((len(sub_answer_ids), 1))
+
+                elif all([qi not in context_counter for qi in question_ids]):
+                    PMI_matrix_q = torch.zeros((max(len(question_ids), 1), 1))
+                    PMI_matrix_a = torch.tensor([context_counter[ai] for ai in sub_answer_ids], dtype=torch.float).unsqueeze(1)
 
                 else:
                     for a_ind, ai in enumerate(sub_answer_ids):
@@ -156,7 +164,7 @@ class AttentionPMI(nn.Module):
 
                             # find bi gram score within a window
                             p_ai_qi = finder.score_ngram(self.bigram_measures.pmi, ai, qi)
-                            p_ai_qi = 0 if p_ai_qi is None else 2**p_ai_qi  # 2 because nltk uses log2
+                            p_ai_qi = .1 if p_ai_qi is None else 2**p_ai_qi  # 2 because nltk uses log2
 
                             # assign PMI to each matrix
                             PMI_matrix_a[a_ind, q_ind] = p_ai_qi
@@ -174,25 +182,33 @@ class AttentionPMI(nn.Module):
 
                 # concatenating list of question and answer ids similar to above
                 question_answer_ids = question_ids + sub_answer_ids
+                if not question_answer_ids:
+                    question_answer_ids = [0, 0] # only if no ids in context from BOTH question and answer ids
 
                 # keep track of how many words will be masked in context and the words selected to be masked
                 masked_context_ids = []
 
                 for max_ind in PMI_indices[:self.max_attention_words]:
                     # cycle through max words for number of unique words to mask
-                    max_word = question_answer_ids[max_ind.item()]
+                    try:
+                        max_word = question_answer_ids[max_ind.item()]
+                    except IndexError: # TODO this is in case only one of question Ids or answer Ids are not in the context, quick fix SHOULD NOT BE LEFT
+                        continue
                     masked_context_ids.append(max_word)
 
                 # if the number of unique words from the answer and questions is less than the max_attention_words
                 # provided by the user then add in the appropriate amount randomly from the context
                 num_words_found_in_context = PMI_max.nonzero().shape[0]
                 if num_words_found_in_context < self.max_attention_words:
-                    masked_context_ids.append(np.random.choice(list(context_counter.keys()), self.max_attention_words - num_words_found_in_context, replace=False).tolist())
+                    masked_context_ids.extend(np.random.choice(list(context_counter.keys()), self.max_attention_words - num_words_found_in_context, replace=False).tolist())
 
                 # find which indices to mask based on the tuples of context words and context indices
                 # indices should be in relation to the [0,.., max length]
                 # no set size for this tensor
                 indices_to_mask = torch.tensor([c_tup[1] for c_tup in sub_context_ids_tups if c_tup[0] in masked_context_ids], dtype=torch.long).to(device)  # might need to make this 2D
+
+                if torch.sum(indices_to_mask) == 0:
+                    print('hi')
 
                 # place ones in the positions to mask
                 sub_my_attention.zero_()
