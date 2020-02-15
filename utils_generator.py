@@ -285,7 +285,7 @@ class MyAlbertForMaskedLM(nn.Module):
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
         onehots = torch.zeros((batch_size, max_len, vocab_size)).to(device)
-        onehot = torch.FloatTensor(1, vocab_size).to(device)
+        onehot = torch.FloatTensor(1, vocab_size)
         for i in range(batch_size):
             for j in range(max_len):
                 if temp_my_attention_mask[i, j] == 1:
