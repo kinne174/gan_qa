@@ -52,7 +52,7 @@ class AttentionNet(torch.nn.Module):
 
         return out_dict
 
-# TODO create attention based on PMI, x from question words: y from answer words, then find them in the context to compute PMI, individual word importance come from matrix of question vs answer words and average/median down the rows and columns
+# TODOfixed create attention based on PMI, x from question words: y from answer words, then find them in the context to compute PMI, individual word importance come from matrix of question vs answer words and average/median down the rows and columns
 class AttentionPMI(nn.Module):
     # This idea comes from "Combining Retrieval, Statistics, and Inference to Answer Elementary Science Questions" by Clark et al. 2016
     def __init__(self, config):

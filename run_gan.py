@@ -261,7 +261,7 @@ def main():
                 self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
                 self.evaluate_during_training = False
-                self.cutoff = 50
+                self.cutoff = None
                 self.epochs = 3
                 self.learning_rate_classifier = 1e-4
                 self.learning_rate_generator = 1e-4
@@ -273,7 +273,7 @@ def main():
                 self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
                 self.seed = 1234
-                self.max_length = 256
+                self.max_length = 512
                 self.batch_size = 1
                 self.do_lower_case = True
                 self.save_steps = 20
@@ -423,6 +423,7 @@ def main():
         for iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
 
+            # TODO should I be splitting it up so that the Generator and Classifier get different input?
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids': batch[0],
                       'attention_mask': batch[1],
@@ -550,7 +551,7 @@ def main():
 
             # save models in cache dir
             if (epoch*args.batch_size + iterate + 1) % args.save_steps == 0 and args.save_steps > 0:
-                # TODO test this
+                # TODOfixed test this
                 output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(epoch*args.batch_size + iterate + 1))
                 if not os.path.exists(output_dir_generator):
                     os.makedirs(output_dir_generator)
@@ -592,8 +593,6 @@ def main():
         eval_results = evaluate(args, classifierM, tokenizer)
         logger.info('The dev accuracy after training is {}, loss is {}'.format(round(eval_results['accuracy'], 3),
                                                                                round(eval_results['loss'], 3)))
-
-
 
 
 if __name__ == '__main__':
