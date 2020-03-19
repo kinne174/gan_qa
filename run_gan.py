@@ -114,211 +114,7 @@ def load_and_cache_features(args, tokenizer, subset):
 
     return dataset
 
-
-def evaluate(args, classifierM, tokenizer, test=False):
-    results = {}
-
-    eval_dataset = load_and_cache_features(args, tokenizer, subset='test' if test else 'dev')
-
-    eval_sampler = SequentialSampler(eval_dataset)
-    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=min(args.batch_size, 100))
-
-    logger.info('Starting Evaluation!')
-    logger.info('Number of examples: {}'.format(len(eval_dataset)))
-
-    eval_loss = 0.
-    all_predictions = None
-    all_labels = None
-    num_steps = 0
-
-    for batch in tqdm(eval_dataloader, 'Evaluating'):
-        classifierM.eval()
-        batch = tuple(t.to(args.device) for t in batch)
-
-        with torch.no_grad():
-            inputs = {'input_ids': batch[0],
-                      'attention_mask': batch[1],
-                      'token_type_ids': batch[2],
-                      #'my_attention_mask': batch[3],
-                      'labels': batch[4],
-                      }
-            eval_predictions, eval_error = classifierM(**inputs)
-
-            eval_loss += eval_error.mean().item()
-
-        if all_predictions is None:
-            all_predictions = eval_predictions.detach().cpu().numpy()
-            all_labels = inputs['labels'].detach().cpu().numpy()
-        else:
-            all_predictions = np.append(all_predictions, eval_predictions.detach().cpu().numpy(), axis=0)
-            all_labels = np.append(all_labels, inputs['labels'].detach().cpu().numpy(), axis=0)
-
-        num_steps += 1
-
-    eval_loss = eval_loss / num_steps
-    all_predictions = np.argmax(all_predictions, axis=1)
-    all_labels = np.argmax(all_labels, axis=1)
-    accuracy = accuracy_score(all_labels, all_predictions)
-    num_correct = accuracy_score(all_labels, all_predictions, normalize=False)
-
-    results['accuracy'] = accuracy
-    results['number correct'] = num_correct
-    results['number of examples'] = len(eval_dataset)
-    results['loss'] = round(eval_loss, 5)
-
-    logger.info('After evaluating:')
-    for key, val in results.items():
-        logger.info('The {} is {}'.format(key, round(val, 3)))
-
-    return results
-
-
-def main():
-    parser = argparse.ArgumentParser()
-
-    # Required
-    parser.add_argument('--data_dir', default=None, type=str, required=True,
-                        help='Folder where the data is being stored')
-    parser.add_argument('--output_dir', default=None, type=str, required=True,
-                        help='Folder where output should be sent')
-    parser.add_argument('--cache_dir', default=None, type=str, required=True,
-                        help='Folder where saved models will be written')
-    parser.add_argument('--transformer_name', default=None, type=str, required=True,
-                        help='Name of the transformer used in tokenizing in {}'.format(', '.join(list(TOKENIZER_CLASSES.keys()))))
-    parser.add_argument('--tokenizer_name', default=None, type=str, required=True,
-                        help='Name of the tokenizer to use from transformers package from a pretrained hf model')
-
-    # Optional
-    parser.add_argument('--generator_model_type', default='seq', type=str,
-                        help='Type of the generator model to use from {}'.format(', '.join(list(generator_models_and_config_classes.keys()))))
-    parser.add_argument('--generator_model_name_or_path', default=None, type=str,
-                        help='Name or path to generator model.')
-    parser.add_argument('--classifier_model_type', default='linear', type=str,
-                        help='Name of the classifier model to use')
-    parser.add_argument('--classifier_model_name_or_path', default=None, type=str,
-                        help='Name or path to classifier model.')
-    parser.add_argument('--attention_model_type', default='PMI', type=str,
-                        help='Name of attention model to use')
-    parser.add_argument('--attention_model_name_or_path', default=None, type=str,
-                        help='Name or path to attention model.')
-    parser.add_argument('--batch_size', type=int, default=5,
-                        help='Size of each batch to be used in training')
-    parser.add_argument('--max_length', type=int, default=512,
-                        help='The maximum length of the sequences allowed. This will induce cutting off or padding')
-    parser.add_argument('--evaluate_during_training', action='store_true',
-                        help='After each epoch test model on evaluation set')
-    parser.add_argument('--cutoff', type=int, default=None,
-                        help='Stop example collection at this number')
-    parser.add_argument('--do_lower_case', action='store_true',
-                        help='Tokenizer converts everything to lower case')
-    parser.add_argument('--attention_window_size', type=int, default=10,
-                        help='The window which to search for bigrams in the PMI attention network')
-    parser.add_argument('--max_attention_words', type=int, default=3,
-                        help='Maximum number of unique words to mask in attention newtworks')
-
-    parser.add_argument('--epochs', default=3, type=int,
-                        help='Number of epochs to run training')
-    parser.add_argument('--learning_rate_classifier', default=1e-4, type=float,
-                        help='Learning rate of the classifier to be used in Adam optimization')
-    parser.add_argument('--learning_rate_generator', default=1e-4, type=float,
-                        help='Learning rate of the generator to be used in Adam optimization')
-    parser.add_argument('--epsilon_classifier', default=1e-8, type=float,
-                        help='Epsilon of classifier for Adam optimizer')
-    parser.add_argument('--epsilon_generator', default=1e-8, type=float,
-                        help='Epsilon of generator for Adam optimizer')
-    # TODO do some annealing with this min_temperature on gumbel softmax
-    parser.add_argument('--min_temperature', default=.5, type=float,
-                        help='Minimum temperature for annealing')
-    parser.add_argument('--save_steps', default=50, type=int,
-                        help='After this many steps save models')
-    parser.add_argument('--do_evaluate', action='store_true',
-                        help='Use models on evaluation dataset')
-    parser.add_argument('--do_not_train', action='store_true',
-                        help='Train models on training dataset')
-    parser.add_argument('--use_gpu', action='store_true',
-                        help='Use a gpu')
-    parser.add_argument('--overwrite_output_dir', action='store_true',
-                        help='Overwrite the output directory')
-    parser.add_argument('--overwrite_cache_dir', action='store_true',
-                        help='Overwrite the cached models directory')
-    parser.add_argument('--seed', default=1234, type=int,
-                        help='Random seed for reproducibility')
-
-    if not getpass.getuser() == 'Mitch':
-        args = parser.parse_args()
-    else:
-        class Args(object):
-            def __init__(self):
-                self.data_dir = '../ARC/ARC-with-context/'
-                self.output_dir = 'output/'
-                self.cache_dir = 'saved/'
-                self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'seq'
-                self.generator_model_name_or_path = 'albert-base-v2'
-                self.classifier_model_type = 'linear'
-                self.classifier_model_name_or_path = 'albert-base-v2'
-                self.attention_model_type = 'PMI'
-                self.attnetion_model_name_or_path = None
-                self.transformer_name = 'albert'
-                self.evaluate_during_training = False
-                self.cutoff = None
-                self.epochs = 3
-                self.learning_rate_classifier = 1e-4
-                self.learning_rate_generator = 1e-4
-                self.epsilon_classifier = 1e-9
-                self.epsilon_generator = 1e-9
-                self.do_evaluate = False
-                self.do_not_train = False
-                self.use_gpu = False
-                self.overwrite_output_dir = True
-                self.overwrite_cache_dir = False
-                self.seed = 1234
-                self.max_length = 512
-                self.batch_size = 1
-                self.do_lower_case = True
-                self.save_steps = 20
-                self.attention_window_size = 10
-                self.max_attention_words = 3
-
-        args = Args()
-
-    # Setup logging
-    num_logging_files = len(glob.glob('logging/logging_*'))
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt='%m/%d/%Y %H:%M:%S',
-                        level=logging.INFO,
-                        filename='logging/logging_{}'.format(num_logging_files))
-
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and not args.overwrite_output_dir:
-        raise Exception("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
-    if not os.path.exists(args.output_dir):
-        raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
-    if not os.path.exists(args.cache_dir):
-        raise Exception('Cache directory does not exist here ({})'.format(args.cache_dir))
-    if not os.path.exists(args.data_dir):
-        raise Exception('Data directory does not exist here ({})'.format(args.data_dir))
-
-    for arg, value in sorted(vars(args).items()):
-        logging.info("Argument {}: {}".format(arg, value))
-
-    # Set seed
-    set_seed(args)
-
-    # get just tokenizer for now, maybe in the future can get default models too
-    tokenizer_class = TOKENIZER_CLASSES[args.transformer_name]
-    tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, do_lower_case=args.do_lower_case)
-
-    dataset = load_and_cache_features(args, tokenizer, 'train')
-
-    # use pytorch data loaders to cycle through the data,
-    train_sampler = RandomSampler(dataset, replacement=False)
-    train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size)
-
-    # get whether running on cpu or gpu
-    device = get_device() if args.use_gpu else torch.device('cpu')
-    args.device = device
-    logger.info('Using device {}'.format(args.device))
-
+def inititalize_models(args, tokenizer):
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
     attention_config_class, attention_model_class = attention_models_and_config_classes[args.attention_model_type]
@@ -401,20 +197,23 @@ def main():
     attentionM.to(args.device)
     classifierM.to(args.device)
 
-    if args.use_gpu:
-        logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(args.device,
-                                                                                                           torch.cuda.memory_allocated(args.device)*1e-9,
-                                                                                                           torch.cuda.memory_cached(args.device)*1e-9))
-        logger.info('The number of gpus available is {}'.format(torch.cuda.device_count()))
+    return generatorM, attentionM, classifierM
+
+
+def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
+
+    # use pytorch data loaders to cycle through the data
+    train_sampler = RandomSampler(dataset, replacement=False)
+    train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size)
 
     # optimizers
     classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
     generatorO = AdamW(generatorM.parameters(), lr=args.learning_rate_generator, eps=args.epsilon_generator)
-    # attentionO = AdamW(attentionM.parameters(), lr=learning_rateG, eps=epsilonG)
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
     best_dev_acc = 0.0
+    global_step = 0
 
     logger.info('Starting to train!')
     logger.info('There are {} examples.'.format(len(dataset)))
@@ -423,7 +222,9 @@ def main():
         for iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
 
-            # TODO should I be splitting it up so that the Generator and Classifier get different input?
+            # TODOfixed should I be splitting it up so that the Generator and Classifier get different input?
+            # I don't think so because the classifier is making a judgement on the data but not training in first pass, so should still give it a chance to see it in the second
+            # also don't have enough data values to afford not to pass them
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids': batch[0],
                       'attention_mask': batch[1],
@@ -454,6 +255,8 @@ def main():
             predictions, errorG = classifierM(**fake_inputs)
             logger.info('Generator classification success')
 
+            # TODO from fake_input_ids and attention masks create output
+
             if errorG is None:
                 logger.warning('ErrorG is None!')
                 raise Exception('ErrorG is None!')
@@ -476,9 +279,14 @@ def main():
             # print(torch.max(list(classifierM.parameters())[0].grad))
             # print('*****************************************************************')
             if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
-                raise Exception('There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(epoch, iterate))
-            if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
-                logger.warning('There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+                raise Exception(
+                    'There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(
+                        epoch, iterate))
+            if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in
+                    range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
+                logger.warning(
+                    'There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch,
+                                                                                                                iterate))
                 # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 
             # Update generatorM parameters
@@ -520,16 +328,22 @@ def main():
             # for i in range(len(list(generatorM.parameters()))):
             #     print(i)
             #     print(list(generatorM.parameters())[i].grad)
-                # print(torch.max(list(generatorM.parameters())[i].grad))
+            # print(torch.max(list(generatorM.parameters())[i].grad))
             # print('classifier model')
             # for i in range(len(list(classifierM.parameters()))):
             #     print(list(classifierM.parameters())[i].grad)
             #     print(torch.max(list(classifierM.parameters())[i].grad))
             # print('*****************************************************************')
-            if all([list(classifierM.parameters())[i].grad is None for i in range(len(list(classifierM.parameters())))]):
-                raise Exception('There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(epoch, iterate))
-            if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
-                logger.warning('There are some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
+            if all([list(classifierM.parameters())[i].grad is None for i in
+                    range(len(list(classifierM.parameters())))]):
+                raise Exception(
+                    'There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(
+                        epoch, iterate))
+            if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in
+                    range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
+                logger.warning(
+                    'There are some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch,
+                                                                                                                  iterate))
                 # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
             # update classifier parameters
@@ -541,18 +355,20 @@ def main():
             # attentionM.zero_grad()
             classifierM.zero_grad()
 
-
             # add errors together for logging purposes
             errorD = error_real + error_fake
+
+            # TODO use predictions to log how good the model is doing
 
             # log error for this step
             logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
             logger.info('The classifier error is {}'.format(round(errorD.detach().item(), 3)))
 
             # save models in cache dir
-            if (epoch*args.batch_size + iterate + 1) % args.save_steps == 0 and args.save_steps > 0:
-                # TODOfixed test this
-                output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(epoch*args.batch_size + iterate + 1))
+            if global_step % args.save_steps == 0 and global_step is not 0:
+
+                # TODO throw this to a function to save model checkpoints
+                output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(global_step))
                 if not os.path.exists(output_dir_generator):
                     os.makedirs(output_dir_generator)
                 generator_model_to_save = generatorM.module if hasattr(generatorM, 'module') else generatorM
@@ -562,7 +378,7 @@ def main():
                 else:
                     logger.info('Not saving generator model.')
 
-                output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(epoch*args.batch_size + iterate + 1))
+                output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(global_step))
                 if not os.path.exists(output_dir_classifier):
                     os.makedirs(output_dir_classifier)
                 classifier_model_to_save = classifierM.module if hasattr(classifierM, 'module') else classifierM
@@ -572,32 +388,297 @@ def main():
                 else:
                     logger.info('Not saving classifier model.')
 
-        if args.evaluate_during_training:
-            eval_results = evaluate(args, classifierM, tokenizer, test=False)
+                if args.evaluate_during_training:
+                    eval_results = evaluate(args, classifierM, tokenizer, test=False)
+                    # TODO report dev results after each cycle
 
-            if eval_results['accuracy'] > best_dev_acc:
-                best_dev_acc = eval_results['accuracy']
-                best_dev_loss = eval_results['loss']
-                best_epoch = epoch
+                    if eval_results['accuracy'] > best_dev_acc:
+                        best_dev_acc = eval_results['accuracy']
+                        best_dev_loss = eval_results['loss']
 
+                        best_epoch = epoch
+            global_step += 1
         epoch_iterator.close()
-
     train_iterator.close()
 
-    if args.evaluate_during_training:
-        logger.info('The best dev accuracy during training is {}, loss is {} on epoch {}'.format(round(best_dev_acc, 3),
-                                                                                                 round(best_dev_loss, 3),
-                                                                                                 best_epoch))
+    # TODO when out of double for loop save model checkpoints and report best dev results
 
-    if args.do_evaluate:
+def evaluate(args, classifierM, tokenizer, test=False):
+    results = {}
+
+    eval_dataset = load_and_cache_features(args, tokenizer, subset='test' if test else 'dev')
+
+    eval_sampler = SequentialSampler(eval_dataset)
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=min(args.batch_size, 100))
+
+    logger.info('Starting Evaluation!')
+    logger.info('Number of examples: {}'.format(len(eval_dataset)))
+
+    eval_loss = 0.
+    all_predictions = None
+    all_labels = None
+    num_steps = 0
+
+    for batch in tqdm(eval_dataloader, 'Evaluating'):
+        classifierM.eval()
+        batch = tuple(t.to(args.device) for t in batch)
+
+        with torch.no_grad():
+            inputs = {'input_ids': batch[0],
+                      'attention_mask': batch[1],
+                      'token_type_ids': batch[2],
+                      #'my_attention_mask': batch[3],
+                      'labels': batch[4],
+                      }
+            eval_predictions, eval_error = classifierM(**inputs)
+
+            eval_loss += eval_error.mean().item()
+
+        if all_predictions is None:
+            all_predictions = eval_predictions.detach().cpu().numpy()
+            all_labels = inputs['labels'].detach().cpu().numpy()
+        else:
+            all_predictions = np.append(all_predictions, eval_predictions.detach().cpu().numpy(), axis=0)
+            all_labels = np.append(all_labels, inputs['labels'].detach().cpu().numpy(), axis=0)
+
+        num_steps += 1
+
+    eval_loss = eval_loss / num_steps
+    all_predictions = np.argmax(all_predictions, axis=1)
+    all_labels = np.argmax(all_labels, axis=1)
+    accuracy = accuracy_score(all_labels, all_predictions)
+    num_correct = accuracy_score(all_labels, all_predictions, normalize=False)
+
+    results['accuracy'] = accuracy
+    results['number correct'] = num_correct
+    results['number of examples'] = len(eval_dataset)
+    results['loss'] = round(eval_loss, 5)
+
+    logger.info('After evaluating:')
+    for key, val in results.items():
+        logger.info('The {} is {}'.format(key, round(val, 3)))
+
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    if not getpass.getuser() == 'Mitch':
+
+        # Required
+        parser.add_argument('--transformer_name', default=None, type=str, required=True,
+                            help='Name of the transformer used in tokenizing in {}'.format(', '.join(list(TOKENIZER_CLASSES.keys()))))
+        parser.add_argument('--tokenizer_name', default=None, type=str, required=True,
+                            help='Name of the tokenizer to use from transformers package from a pretrained hf model')
+
+        # Optional
+        parser.add_argument('--data_dir', default='../ARC/ARC-with-context/', type=str,
+                            help='Folder where the data is being stored')
+        parser.add_argument('--output_dir', default='output/', type=str,
+                            help='Folder where output should be sent')
+        parser.add_argument('--cache_dir', default='saved/', type=str,
+                            help='Folder where saved models will be written')
+        parser.add_argument('--generator_model_type', default='seq', type=str,
+                            help='Type of the generator model to use from {}'.format(', '.join(list(generator_models_and_config_classes.keys()))))
+        parser.add_argument('--generator_model_name_or_path', default=None, type=str,
+                            help='Name or path to generator model.')
+        parser.add_argument('--classifier_model_type', default='linear', type=str,
+                            help='Name of the classifier model to use')
+        parser.add_argument('--classifier_model_name_or_path', default=None, type=str,
+                            help='Name or path to classifier model.')
+        # TODO change attention model to train_noise to randomly select important words rathern than have it learned
+        parser.add_argument('--attention_model_type', default='PMI', type=str,
+                            help='Name of attention model to use')
+        parser.add_argument('--attention_model_name_or_path', default=None, type=str,
+                            help='Name or path to attention model.')
+        parser.add_argument('--batch_size', type=int, default=5,
+                            help='Size of each batch to be used in training')
+        parser.add_argument('--max_length', type=int, default=512,
+                            help='The maximum length of the sequences allowed. This will induce cutting off or padding')
+        parser.add_argument('--evaluate_during_training', action='store_true',
+                            help='After each epoch test model on evaluation set')
+        parser.add_argument('--cutoff', type=int, default=None,
+                            help='Stop example collection at this number')
+        parser.add_argument('--do_lower_case', action='store_true',
+                            help='Tokenizer converts everything to lower case')
+        parser.add_argument('--attention_window_size', type=int, default=10,
+                            help='The window which to search for bigrams in the PMI attention network')
+        parser.add_argument('--max_attention_words', type=int, default=3,
+                            help='Maximum number of unique words to mask in attention newtworks')
+
+        parser.add_argument('--epochs', default=3, type=int,
+                            help='Number of epochs to run training')
+        parser.add_argument('--learning_rate_classifier', default=1e-4, type=float,
+                            help='Learning rate of the classifier to be used in Adam optimization')
+        parser.add_argument('--learning_rate_generator', default=1e-4, type=float,
+                            help='Learning rate of the generator to be used in Adam optimization')
+        parser.add_argument('--epsilon_classifier', default=1e-8, type=float,
+                            help='Epsilon of classifier for Adam optimizer')
+        parser.add_argument('--epsilon_generator', default=1e-8, type=float,
+                            help='Epsilon of generator for Adam optimizer')
+        # TODO do some annealing with this min_temperature on gumbel softmax
+        parser.add_argument('--min_temperature', default=.5, type=float,
+                            help='Minimum temperature for annealing')
+        parser.add_argument('--save_steps', default=50, type=int,
+                            help='After this many steps save models')
+        parser.add_argument('--do_evaluate_dev', action='store_true',
+                            help='Use models on "dev" dataset')
+        parser.add_argument('--do_evaluate_test', action='store_true',
+                            help='Use models on "test" dataset')
+        parser.add_argument('--do_train', action='store_true',
+                            help='Train models on training dataset')
+        parser.add_argument('--use_gpu', action='store_true',
+                            help='Use a gpu')
+        parser.add_argument('--overwrite_output_dir', action='store_true',
+                            help='Overwrite the output directory')
+        parser.add_argument('--overwrite_cache_dir', action='store_true',
+                            help='Overwrite the cached models directory')
+        parser.add_argument('--clear_output_dir', action='store_true',
+                            help='Clear all files in output directory')
+        parser.add_argument('--seed', default=1234, type=int,
+                            help='Random seed for reproducibility')
+
+        # TODO add an all models option to load all models when evaluating
+
+        args = parser.parse_args()
+    else:
+        class Args(object):
+            def __init__(self):
+                self.data_dir = '../ARC/ARC-with-context/'
+                self.output_dir = 'output/'
+                self.cache_dir = 'saved/'
+                self.tokenizer_name = 'albert-base-v2'
+                self.generator_model_type = 'seq'
+                self.generator_model_name_or_path = 'albert-base-v2'
+                self.classifier_model_type = 'linear'
+                self.classifier_model_name_or_path = 'albert-base-v2'
+                self.attention_model_type = 'PMI'
+                self.attnetion_model_name_or_path = None
+                self.transformer_name = 'albert'
+                self.evaluate_during_training = False
+                self.cutoff = None
+                self.epochs = 3
+                self.learning_rate_classifier = 1e-4
+                self.learning_rate_generator = 1e-4
+                self.epsilon_classifier = 1e-9
+                self.epsilon_generator = 1e-9
+                self.do_evaluate_dev = False
+                self.do_evaluate_test = False
+                self.do_train = True
+                self.use_gpu = False
+                self.overwrite_output_dir = True
+                self.overwrite_cache_dir = False
+                self.clear_output_dir = False
+                self.seed = 1234
+                self.max_length = 512
+                self.batch_size = 1
+                self.do_lower_case = True
+                self.save_steps = 20
+                self.attention_window_size = 10
+                self.max_attention_words = 3
+
+        args = Args()
+
+    # Setup logging
+    num_logging_files = len(glob.glob('logging/logging_g-{}_c-{}_*'.format(args.generator_model_type, args.classifier_model_type)))
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO,
+                        filename='logging/logging_{}'.format(num_logging_files))
+
+    if not os.path.exists(args.output_dir):
+        raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
+    if not os.path.exists(args.cache_dir):
+        raise Exception('Cache directory does not exist here ({})'.format(args.cache_dir))
+    if not os.path.exists(args.data_dir):
+        raise Exception('Data directory does not exist here ({})'.format(args.data_dir))
+    if not args.train and (args.evaluate_test or args.evaluate_dev) and args.clear_output_dir:
+        raise Exception('You are clearing the output directory without training and asking to evaluate on the test and/or dev set!\n'
+                        'Fix one of --train, --evaluate_test, --evaluate_dev, or --clear_output_dir')
+
+    # within output and saved folders create a folder with domain words to keep output and saved objects
+    folder_name = '-'.join([args.generator_model_type, args.classifier_model_type])
+    proposed_output_dir = os.path.join(args.output_dir, folder_name)
+    if not os.path.exists(proposed_output_dir):
+        os.makedirs(proposed_output_dir)
+    else:
+        if os.listdir(proposed_output_dir):
+            if not args.overwrite_output_dir:
+                raise Exception(
+                    "Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(
+                        proposed_output_dir))
+            elif args.clear_output_dir:
+                for folder in os.listdir(proposed_output_dir):
+                    filenames = os.listdir(os.path.join(proposed_output_dir, folder))
+                    for filename in filenames:
+                        file_path = os.path.join(proposed_output_dir, folder, filename)
+                        try:
+                            os.unlink(file_path)
+                        except Exception as e:
+                            logger.info('Failed to delete {}. Reason: {}'.format(file_path, e))
+                    os.rmdir(os.path.join(proposed_output_dir, folder))
+    if not args.overwrite_output_dir and args.clear_output_dir:
+        logger.info('If you want to clear the output directory make sure to set --overwrite_output_dir too')
+
+    args.output_dir = proposed_output_dir
+
+    # reassign cache dir based on domain words
+    proposed_cache_dir = os.path.join(args.cache_dir, folder_name)
+    if not os.path.exists(proposed_cache_dir):
+        os.makedirs(proposed_cache_dir)
+
+    args.cache_dir = proposed_cache_dir
+
+    for arg, value in sorted(vars(args).items()):
+        logging.info("Argument {}: {}".format(arg, value))
+
+    # Set seed
+    set_seed(args)
+
+    # get tokenizer
+    tokenizer_class = TOKENIZER_CLASSES[args.transformer_name]
+    tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, do_lower_case=args.do_lower_case)
+
+    # get whether running on cpu or gpu
+    device = get_device() if args.use_gpu else torch.device('cpu')
+    args.device = device
+    logger.info('Using device {}'.format(args.device))
+
+    # initialize and return models
+    generatorM, attentionM, classifierM = inititalize_models(args, tokenizer)
+
+    if args.use_gpu:
+        logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(args.device,
+                                                                                                           torch.cuda.memory_allocated(args.device)*1e-9,
+                                                                                                           torch.cuda.memory_cached(args.device)*1e-9))
+        logger.info('The number of gpus available is {}'.format(torch.cuda.device_count()))
+
+    if args.do_train:
+        # dataset includes: input_ids [n, 4, max_length], input_masks [n, 4, max_length], token_type_masks [n, 4, max_length]
+        # attention_masks [n, 4, max_length] and labels [n, 4]
+        dataset = load_and_cache_features(args, tokenizer, 'train')
+
+        train(args, tokenizer, dataset, generatorM, attentionM, classifierM)
+
+
+    if args.do_evaluate_dev:
         eval_results = evaluate(args, classifierM, tokenizer)
         logger.info('The dev accuracy after training is {}, loss is {}'.format(round(eval_results['accuracy'], 3),
                                                                                round(eval_results['loss'], 3)))
+
+    if args.do_evaluate_test:
+        eval_results = evaluate(args, classifierM, tokenizer, test=True)
+        logger.info('The test accuracy after training is {}, loss is {}'.format(round(eval_results['accuracy'], 3),
+                                                                               round(eval_results['loss'], 3)))
+
+    # TODO do an ablation study on generator and classifier outputs
 
 
 if __name__ == '__main__':
     main()
 
-# TODO one isssue with this is I need to code up how to handle non pytorch models since they won't work with optimizer/loss functionality
+# TODO pretrain/ semi supervised approach to train generator to get it comfortable with generating fake data, can use corpus one-hop sentences from questions
+# TODO try a smaller classifier and larger generator model
 # max length 512 batch size 2
 # max length 256 batch size 5
