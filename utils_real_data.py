@@ -19,37 +19,6 @@ class ArcExample(object):
         self.label = label
 
 
-def randomize_example_loader(cutoff):
-    all_examples = []
-    max_sentence_length = 15
-    num_examples = 16 if cutoff is None else cutoff
-    for _ in range(num_examples):
-        question = ''.join(random.choice(string.ascii_letters) for _ in range(np.random.randint(max_sentence_length//2, max_sentence_length)))
-        question += ' ' * (max_sentence_length - len(question))
-
-        contexts = [
-            ''.join(random.choice(string.ascii_letters) for _ in range(np.random.randint(max_sentence_length*3//2, max_sentence_length * 3))) for
-            _ in range(4)]
-        contexts = [c + ' ' * (max_sentence_length * 3 - len(c)) for c in contexts]
-
-        endings = [''.join(random.choice(string.ascii_letters) for _ in range(np.random.randint(max_sentence_length//2, max_sentence_length)))
-                   for _ in range(4)]
-        endings = [e + ' ' * (max_sentence_length - len(e)) for e in endings]
-
-        label = np.random.randint(4)
-
-        all_examples.append(
-            ArcExample(example_id=np.random.randint(num_examples),
-                       question=question,
-                       contexts=contexts,
-                       endings=endings,
-                       label=label
-                       )
-        )
-
-    return all_examples
-
-
 def example_loader(args, subset):
     # returns an object of type ArcExample similar to hugging face transformers
 
