@@ -6,6 +6,8 @@ import tqdm
 import logging
 import os
 
+from train_noise import load_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +54,8 @@ def feature_loader(args, tokenizer, examples):
                 logger.info('Truncating context for question id {}'.format(ex.example_id))
 
             input_ids, token_type_mask = inputs['input_ids'], inputs['token_type_ids']
+
+            # TODO get the attention mask one time here and assign a value to each word, then attentionM can change them to zeros and ones to classify which words should be changed
 
             input_mask = [1]*len(input_ids)
 

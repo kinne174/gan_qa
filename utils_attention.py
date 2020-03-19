@@ -7,7 +7,6 @@ from nltk.collocations import *
 import string
 from collections import Counter
 import logging
-
 from transformers import PreTrainedTokenizer, PretrainedConfig
 
 logger = logging.getLogger(__name__)
@@ -231,6 +230,21 @@ class AttentionPMI(nn.Module):
 
         return out_dict
 
+class AttentionEssential(nn.Module):
+    def __init__(self, config):
+        super(AttentionEssential, self).__init__()
+        pass
+
+    # TODO take in attention mask and return a vector of zeros and ones to determine which words should be replaced
+
+    @classmethod
+    def from_pretrained(cls, config):
+        return cls(config)
+
+    def forward(self, **inputs):
+        pass
+
+
 class AttentionConfig(PretrainedConfig):
     def __init__(self, **kwargs):
         super(AttentionConfig, self).__init__()
@@ -250,4 +264,5 @@ class AttentionConfig(PretrainedConfig):
 attention_models_and_config_classes = {
     'random': (AttentionConfig, AttentionNet),
     'PMI': (AttentionConfig, AttentionPMI),
+    'essential': (AttentionConfig, AttentionEssential)
 }
