@@ -1,10 +1,11 @@
-import numpy as np
-import getpass
 from utils_real_data import ArcExample
 import torch
 import tqdm
 import logging
-import os
+import nltk
+from nltk import wordpunct_tokenize
+from string import punctuation
+import numpy as np
 
 from train_noise import load_model
 
@@ -25,6 +26,12 @@ class ArcFeature(object):
 
 
 def feature_loader(args, tokenizer, examples):
+
+    # load the model and translation dict and counter
+    model, word_to_idx, _ = load_model(args)
+
+    model = model.to(args.device)
+
     # returns a list of objects of type ArcFeature similar to hugging face transformers
     break_flag = False
     all_features = []
@@ -55,22 +62,84 @@ def feature_loader(args, tokenizer, examples):
 
             input_ids, token_type_mask = inputs['input_ids'], inputs['token_type_ids']
 
-            # TODO get the attention mask one time here and assign a value to each word, then attentionM can change them to zeros and ones to classify which words should be changed
-
             input_mask = [1]*len(input_ids)
+
+            words = wordpunct_tokenize(context)
+            # the model has it's own tokenizing so if the word is not there have to use the noise/ pad embedding
+            tokens = []
+            for word_ind, word in enumerate(words):
+                if word in word_to_idx:
+                    tokens.append(word_to_idx[word])
+                else:
+                    tokens.append(0)
+
+            # send the sentence through the model
+            tokens = torch.tensor(tokens, dtype=torch.long).unsqueeze(0)
+
+            # predictions is a vector the length of the sentence with a number between 0, 1 for each word representing how important the model believes it is, closer to 1 is more important
+            predictions, _ = model(input_ids=tokens, add_special_tokens=True)
+
+            assert tokens.shape == predictions.shape
+
+            predictions = predictions.squeeze().tolist()
+
+            # line up predictions with the context words
+
+            # convert context ids to tokens
+            context_beginning_ind = token_type_mask.index(1)
+
+            context_ids = input_ids[context_beginning_ind:]
+            input_tokens = tokenizer.convert_ids_to_tokens(input_ids)
+            context_tokens = tokenizer.convert_ids_to_tokens(context_ids)
+
+            if len(context_tokens) == len(predictions):
+                new_predictions = predictions
+            else:
+                new_predictions = []
+                prediction_ind = 0
+                # if token is a special token then assign it zero (other than <unk>)
+                for token in context_tokens:
+                    if token in tokenizer.all_special_tokens:
+                        if token == '<unk>':
+                            new_predictions.append(predictions[prediction_ind])
+                            prediction_ind += 1
+                        else:
+                            new_predictions.append(0.)
+                    elif token in punctuation or token == '▁':
+                        new_predictions.append(0.)
+                        prediction_ind += 1
+                    elif '▁' not in token:  # don't know what this character is, had to copy paste from debugger
+                        new_predictions.append(predictions[prediction_ind-1])
+                    else:
+                        new_predictions.append(predictions[prediction_ind])
+                        prediction_ind += 1
+                    if prediction_ind >= len(predictions):
+                        break
+
+                if len(new_predictions) > len(context_tokens):
+                    new_predictions = new_predictions[:len(context_tokens)]
+                if len(new_predictions) < len(context_tokens):
+                    new_predictions.extend([np.mean(predictions)]*(len(context_tokens) - len(new_predictions)))
+
+            assert len(new_predictions) == sum(token_type_mask), 'There should be the same number of predictions ({}) as there are context tokens ({})'.format(len(new_predictions), sum(token_type_mask))
+
+            attention_mask = [0]*(context_beginning_ind) + new_predictions
+
+            assert len(attention_mask) == len(input_ids), 'The length of attention_mask ({}) should be the same length as input_ids ({})'.format(len(attention_mask), len(input_ids))
 
             padding_length = args.max_length - len(input_ids)
             if padding_length > 0:
                 input_ids = input_ids + [0]*padding_length
                 token_type_mask = token_type_mask + [0]*padding_length
                 input_mask = input_mask + [0]*padding_length
+                attention_mask = attention_mask + [0.]*padding_length
 
             assert len(input_ids) == args.max_length
             assert len(token_type_mask) == args.max_length
             assert len(input_mask) == args.max_length
+            assert len(attention_mask) == args.max_length
 
-            # the token_type_mask and attention_mask is the same so can just use token_type_mask twice
-            choices_features.append((input_ids, input_mask, token_type_mask, token_type_mask))
+            choices_features.append((input_ids, input_mask, token_type_mask, attention_mask))
 
         if break_flag:
             break_flag = False
@@ -85,7 +154,7 @@ def feature_loader(args, tokenizer, examples):
             logger.info('input_ids: {}'.format(' '.join(map(str, input_ids))))
             logger.info('input_mask: {}'.format(' '.join(map(str, input_mask))))
             logger.info('token_type_mask: {}'.format(' '.join(map(str, token_type_mask))))
-            logger.info('attention_mask: {}'.format(' '.join(map(str, token_type_mask))))
+            logger.info('attention_mask: {}'.format(' '.join(map(str, attention_mask))))
 
         all_features.append(ArcFeature(example_id=ex.example_id,
                                        choices_features=choices_features,
