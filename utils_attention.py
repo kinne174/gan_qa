@@ -233,16 +233,43 @@ class AttentionPMI(nn.Module):
 class AttentionEssential(nn.Module):
     def __init__(self, config):
         super(AttentionEssential, self).__init__()
-        pass
 
-    # TODO take in attention mask and return a vector of zeros and ones to determine which words should be replaced
+        self.mu_p = config.mu_p
+
+    # TODO take in attention mask and return a vector of zeros and ones to determine which words should be replaced, change tokens to [MASK]
 
     @classmethod
     def from_pretrained(cls, config):
         return cls(config)
 
-    def forward(self, **inputs):
-        pass
+    def forward(self, **kwargs):
+        attention_mask = np.array(kwargs['attention_mask']).reshape((-1,))
+
+        num_atten_elements = attention_mask.shape[0]
+        num_to_mask = int(num_atten_elements*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
+
+        weighted_perm = np.random.choice(a=num_atten_elements, size=(num_atten_elements,),
+                                         replace=False, p=attention_mask/sum(attention_mask))
+
+        new_attention_mask = torch.zeros((num_atten_elements,), dtype=torch.long)
+
+        for i, wp in enumerate(weighted_perm):
+            if i <= num_to_mask:
+                new_attention_mask[wp] = 1
+            else:
+                new_attention_mask[wp] = 0
+
+        assert sum(new_attention_mask) == num_to_mask
+
+        out = {'attention_mask': new_attention_mask}
+
+        for k, v in kwargs.items():
+            out[k] = v
+
+        return out
+
+    def save_pretrained(self):
+        raise NotImplementedError
 
 
 class AttentionConfig(PretrainedConfig):
