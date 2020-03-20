@@ -243,23 +243,17 @@ class AttentionEssential(nn.Module):
         return cls(config)
 
     def forward(self, **kwargs):
+        # TODO test this
         attention_mask = np.array(kwargs['attention_mask']).reshape((-1,))
+        non_zero_indices, = np.nonzero(attention_mask)
 
-        num_atten_elements = attention_mask.shape[0]
-        num_to_mask = int(num_atten_elements*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
+        num_to_mask = int(non_zero_indices.shape[0]*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
 
-        weighted_perm = np.random.choice(a=num_atten_elements, size=(num_atten_elements,),
-                                         replace=False, p=attention_mask/sum(attention_mask))
+        weighted_perm = np.random.choice(non_zero_indices, size=(non_zero_indices,), replace=False,
+                                         p=attention_mask[non_zero_indices]/sum(attention_mask[non_zero_indices]))
+        indices_to_mask = weighted_perm[:num_to_mask]
 
-        new_attention_mask = torch.zeros((num_atten_elements,), dtype=torch.long)
-
-        for i, wp in enumerate(weighted_perm):
-            if i <= num_to_mask:
-                new_attention_mask[wp] = 1
-            else:
-                new_attention_mask[wp] = 0
-
-        assert sum(new_attention_mask) == num_to_mask
+        new_attention_mask = torch.tensor([1 if i in indices_to_mask else 0 for i in attention_mask.shape[0]], dtype=torch.long)
 
         out = {'attention_mask': new_attention_mask}
 
