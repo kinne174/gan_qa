@@ -123,7 +123,8 @@ def inititalize_models(args, tokenizer):
                                       'window_size': args.attention_window_size,
                                       'max_attention_words': args.max_attention_words,
                                       },
-                              'random': {}
+                              'random': {},
+                              'essential': {'mu_p': args.essential_mu_p},
                               }
     generator_config_dicts = {'seq': {'pretrained_model_name_or_path': 'seq',
                                       'input_dim': tokenizer.vocab_size,
@@ -158,7 +159,8 @@ def inititalize_models(args, tokenizer):
     classifier_config = classifier_config_class.from_pretrained(**classifier_config_dicts[args.classifier_model_type])
 
     attention_model_dicts = {'PMI': {'config': attention_config},
-                             'random': {}
+                             'random': {},
+                             'essential': {'config': attention_config},
                              }
     generator_model_dicts = {'seq': {'config': generator_config},
                               'bert': {'pretrained_model_name_or_path': args.generator_model_name_or_path,
@@ -219,6 +221,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
     logger.info('There are {} examples.'.format(len(dataset)))
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size))
+
+        num_training_seen = 0
+        num_training_correct_real, num_training_correct_fake = 0, 0
         for iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
 
@@ -255,7 +260,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             predictions, errorG = classifierM(**fake_inputs)
             logger.info('Generator classification success')
 
-            # TODO from fake_input_ids and attention masks create output
+            # TODO from fake_input_ids and attention masks create ablation output to study what is being generated
 
             if errorG is None:
                 logger.warning('ErrorG is None!')
@@ -358,50 +363,75 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # add errors together for logging purposes
             errorD = error_real + error_fake
 
-            # TODO use predictions to log how good the model is doing
-
             # log error for this step
             logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
             logger.info('The classifier error is {}'.format(round(errorD.detach().item(), 3)))
 
+            # logging for fake and real prediction success
+            predictions_real = torch.argmax(predictions_real, dim=1)
+            predictions_fake = torch.argmin(predictions_fake, dim=1)
+
+            num_training_seen += inputs['input_ids'].shape[0]
+
+            num_training_correct_real += int(sum(
+                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real)]))
+            num_training_correct_real += int(sum(
+                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake)]))
+
+            logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
+                num_training_correct_real, num_training_seen, round(num_training_correct_real/float(num_training_seen), 3)))
+            logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
+                num_training_correct_fake, num_training_seen, round(num_training_correct_fake/float(num_training_seen), 3)))
+
             # save models in cache dir
             if global_step % args.save_steps == 0 and global_step is not 0:
 
-                # TODO throw this to a function to save model checkpoints
-                output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(global_step))
-                if not os.path.exists(output_dir_generator):
-                    os.makedirs(output_dir_generator)
-                generator_model_to_save = generatorM.module if hasattr(generatorM, 'module') else generatorM
-                if hasattr(generator_model_to_save, 'save_pretrained'):
-                    generator_model_to_save.save_pretrained(output_dir_generator)
-                    logger.info('Saving generator model checkpoint to {}'.format(output_dir_generator))
-                else:
-                    logger.info('Not saving generator model.')
-
-                output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(global_step))
-                if not os.path.exists(output_dir_classifier):
-                    os.makedirs(output_dir_classifier)
-                classifier_model_to_save = classifierM.module if hasattr(classifierM, 'module') else classifierM
-                if hasattr(classifier_model_to_save, 'save_pretrained'):
-                    classifier_model_to_save.save_pretrained(output_dir_classifier)
-                    logger.info('Saving classifier model checkpoint to {}'.format(output_dir_classifier))
-                else:
-                    logger.info('Not saving classifier model.')
+                assert save_models(args, global_step, generatorM, classifierM) == -1
 
                 if args.evaluate_during_training:
                     eval_results = evaluate(args, classifierM, tokenizer, test=False)
-                    # TODO report dev results after each cycle
 
                     if eval_results['accuracy'] > best_dev_acc:
                         best_dev_acc = eval_results['accuracy']
                         best_dev_loss = eval_results['loss']
-
                         best_epoch = epoch
+
+                    logger.info(
+                        'The dev accuracy after during training at checkpoint {} is {}, loss is {}'.format(global_step,
+                                                                                   round(eval_results['accuracy'], 3),
+                                                                                   round(eval_results['loss'], 3)))
+
+
             global_step += 1
         epoch_iterator.close()
     train_iterator.close()
 
-    # TODO when out of double for loop save model checkpoints and report best dev results
+    # TODOfixed when out of double for loop save model checkpoints and report best dev results
+    assert save_models(args, global_step, generatorM, classifierM) == -1
+
+
+def save_models(args, checkpoint, generatorM, classifierM):
+    output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(checkpoint))
+    if not os.path.exists(output_dir_generator):
+        os.makedirs(output_dir_generator)
+    generator_model_to_save = generatorM.module if hasattr(generatorM, 'module') else generatorM
+    if hasattr(generator_model_to_save, 'save_pretrained'):
+        generator_model_to_save.save_pretrained(output_dir_generator)
+        logger.info('Saving generator model checkpoint to {}'.format(output_dir_generator))
+    else:
+        logger.info('Not saving generator model.')
+
+    output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(checkpoint))
+    if not os.path.exists(output_dir_classifier):
+        os.makedirs(output_dir_classifier)
+    classifier_model_to_save = classifierM.module if hasattr(classifierM, 'module') else classifierM
+    if hasattr(classifier_model_to_save, 'save_pretrained'):
+        classifier_model_to_save.save_pretrained(output_dir_classifier)
+        logger.info('Saving classifier model checkpoint to {}'.format(output_dir_classifier))
+    else:
+        logger.info('Not saving classifier model.')
+
+    return -1
 
 def evaluate(args, classifierM, tokenizer, test=False):
     results = {}
@@ -506,6 +536,8 @@ def main():
                             help='The window which to search for bigrams in the PMI attention network')
         parser.add_argument('--max_attention_words', type=int, default=3,
                             help='Maximum number of unique words to mask in attention newtworks')
+        parser.add_argument('--essential_terms_hidden_dim', type=int, default=512,
+                            help='Number of hidden dimensions in essential terms model')
 
         parser.add_argument('--epochs', default=3, type=int,
                             help='Number of epochs to run training')
@@ -557,7 +589,7 @@ def main():
                 self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
                 self.evaluate_during_training = False
-                self.cutoff = None
+                self.cutoff = 50
                 self.epochs = 3
                 self.learning_rate_classifier = 1e-4
                 self.learning_rate_generator = 1e-4
@@ -574,9 +606,11 @@ def main():
                 self.max_length = 512
                 self.batch_size = 1
                 self.do_lower_case = True
-                self.save_steps = 20
+                self.save_steps = 2
                 self.attention_window_size = 10
                 self.max_attention_words = 3
+                self.essential_terms_hidden_dim = 100
+                self.essential_mu_p = 0.05
 
         args = Args()
 
@@ -593,7 +627,7 @@ def main():
         raise Exception('Cache directory does not exist here ({})'.format(args.cache_dir))
     if not os.path.exists(args.data_dir):
         raise Exception('Data directory does not exist here ({})'.format(args.data_dir))
-    if not args.train and (args.evaluate_test or args.evaluate_dev) and args.clear_output_dir:
+    if not args.do_train and (args.evaluate_test or args.evaluate_dev) and args.clear_output_dir:
         raise Exception('You are clearing the output directory without training and asking to evaluate on the test and/or dev set!\n'
                         'Fix one of --train, --evaluate_test, --evaluate_dev, or --clear_output_dir')
 
