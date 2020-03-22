@@ -235,6 +235,7 @@ class AttentionEssential(nn.Module):
         super(AttentionEssential, self).__init__()
 
         self.mu_p = config.mu_p
+        self.mask_id = config.mask_id
 
     @classmethod
     def from_pretrained(cls, config):
@@ -244,9 +245,13 @@ class AttentionEssential(nn.Module):
         all_attention_mask = kwargs['my_attention_mask']
         out_attention_mask = torch.empty(all_attention_mask.shape)
 
+        all_input_ids = kwargs['input_ids']
+        out_input_ids = torch.empty(all_input_ids.shape)
+
         for k in range(out_attention_mask.shape[0]):
             for j in range(out_attention_mask.shape[1]):
                 attention_mask = all_attention_mask[k, j, :]
+                input_ids = all_input_ids[k, j, :]
 
                 non_zero_indices = attention_mask.nonzero().reshape((-1))
 
@@ -259,11 +264,15 @@ class AttentionEssential(nn.Module):
                                                  p=prob_vector)
                 indices_to_mask = weighted_perm[:num_to_mask]
 
+                new_input_ids = torch.tensor([self.mask_id if i in indices_to_mask else id for i, id in enumerate(input_ids)], dtype=torch.long).reshape((-1))
+
                 new_attention_mask = torch.tensor([1 if i in indices_to_mask else 0 for i in range(attention_mask.shape[0])], dtype=torch.long).reshape((-1,))
                 assert sum(new_attention_mask) == num_to_mask
 
+                out_input_ids[k, j, :] = new_input_ids
                 out_attention_mask[k, j, :] = new_attention_mask
 
+        out_input_ids = out_input_ids.long()
         out_attention_mask = out_attention_mask.long()
 
         out = {}
@@ -271,6 +280,10 @@ class AttentionEssential(nn.Module):
             out[k] = v
 
         out['my_attention_mask'] = out_attention_mask
+        out['input_ids'] = out_input_ids
+
+        assert all([ki in list(out.keys()) for ki in list(kwargs.keys())])
+        assert all([ko in list(kwargs.keys()) for ko in list(out.keys())])
 
         return out
 
