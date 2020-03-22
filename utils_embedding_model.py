@@ -43,6 +43,8 @@ def feature_loader(args, tokenizer, examples):
         choices_features = []
         for ending, context in zip(ex.endings, ex.contexts):
             question_ending = ex.question + ' ' + ending
+            question_ending = ''.join([c if c.isalnum() else ' ' for c in question_ending])
+            context = ''.join([c if c.isalnum() else ' ' for c in context])
 
             try:
                 inputs = tokenizer.encode_plus(
@@ -65,6 +67,8 @@ def feature_loader(args, tokenizer, examples):
             input_mask = [1]*len(input_ids)
 
             words = wordpunct_tokenize(context)
+            # words = [''.join([c for c in word if c.isalnum()]) for word in words if word not in punctuation]
+
             # the model has it's own tokenizing so if the word is not there have to use the noise/ pad embedding
             tokens = []
             for word_ind, word in enumerate(words):
@@ -89,7 +93,6 @@ def feature_loader(args, tokenizer, examples):
             context_beginning_ind = token_type_mask.index(1)
 
             context_ids = input_ids[context_beginning_ind:]
-            input_tokens = tokenizer.convert_ids_to_tokens(input_ids)
             context_tokens = tokenizer.convert_ids_to_tokens(context_ids)
 
             if len(context_tokens) == len(predictions):
@@ -113,6 +116,8 @@ def feature_loader(args, tokenizer, examples):
                     else:
                         new_predictions.append(predictions[prediction_ind])
                         prediction_ind += 1
+
+                # This stuff should not activate but just in case...*
                     if prediction_ind >= len(predictions):
                         break
 
@@ -120,6 +125,7 @@ def feature_loader(args, tokenizer, examples):
                     new_predictions = new_predictions[:len(context_tokens)]
                 if len(new_predictions) < len(context_tokens):
                     new_predictions.extend([np.mean(predictions)]*(len(context_tokens) - len(new_predictions)))
+                # *
 
             assert len(new_predictions) == sum(token_type_mask), 'There should be the same number of predictions ({}) as there are context tokens ({})'.format(len(new_predictions), sum(token_type_mask))
 
