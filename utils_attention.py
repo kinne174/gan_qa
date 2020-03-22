@@ -112,7 +112,7 @@ class AttentionPMI(nn.Module):
             # save index of ids in tensor for creating the outputted my_attention_mask, use a tuple of (index, id), needed for context only
             context_ids_tups = [[(ci, ind + answer_cutoff_inds[j] + 1) for ind, ci in enumerate(sub_context_ids)] for j, sub_context_ids in enumerate(context_ids)]
 
-            # TODO should I be deleting stop words here? If I'm using a word window in the next step?
+            # TODOno should I be deleting stop words here? If I'm using a word window in the next step?
             # context_ids = [[ci for ci in sub_context_ids if ci not in self.bad_ids] for sub_context_ids in context_ids]
 
             # temporary tensor of dimension [4, max length] to hold output masks for all options in current question
@@ -236,29 +236,41 @@ class AttentionEssential(nn.Module):
 
         self.mu_p = config.mu_p
 
-    # TODO take in attention mask and return a vector of zeros and ones to determine which words should be replaced, change tokens to [MASK]
-
     @classmethod
     def from_pretrained(cls, config):
         return cls(config)
 
     def forward(self, **kwargs):
-        # TODO test this
-        attention_mask = np.array(kwargs['attention_mask']).reshape((-1,))
-        non_zero_indices, = np.nonzero(attention_mask)
+        all_attention_mask = kwargs['my_attention_mask']
+        out_attention_mask = torch.empty(all_attention_mask.shape)
 
-        num_to_mask = int(non_zero_indices.shape[0]*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
+        for k in range(out_attention_mask.shape[0]):
+            for j in range(out_attention_mask.shape[1]):
+                attention_mask = all_attention_mask[k, j, :]
 
-        weighted_perm = np.random.choice(non_zero_indices, size=(non_zero_indices,), replace=False,
-                                         p=attention_mask[non_zero_indices]/sum(attention_mask[non_zero_indices]))
-        indices_to_mask = weighted_perm[:num_to_mask]
+                non_zero_indices = attention_mask.nonzero().reshape((-1))
 
-        new_attention_mask = torch.tensor([1 if i in indices_to_mask else 0 for i in attention_mask.shape[0]], dtype=torch.long)
+                num_to_mask = int(non_zero_indices.shape[0]*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
 
-        out = {'attention_mask': new_attention_mask}
+                non_zeros = np.array(attention_mask[non_zero_indices])
+                prob_vector = non_zeros/np.sum(non_zeros)
 
+                weighted_perm = np.random.choice(non_zero_indices, size=(non_zero_indices.shape[0],), replace=False,
+                                                 p=prob_vector)
+                indices_to_mask = weighted_perm[:num_to_mask]
+
+                new_attention_mask = torch.tensor([1 if i in indices_to_mask else 0 for i in range(attention_mask.shape[0])], dtype=torch.long).reshape((-1,))
+                assert sum(new_attention_mask) == num_to_mask
+
+                out_attention_mask[k, j, :] = new_attention_mask
+
+        out_attention_mask = out_attention_mask.long()
+
+        out = {}
         for k, v in kwargs.items():
             out[k] = v
+
+        out['my_attention_mask'] = out_attention_mask
 
         return out
 
