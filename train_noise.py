@@ -461,5 +461,3 @@ if __name__ == '__main__':
     nlp = spacy.load("en_core_web_md", disable=['ner', 'parser'])
 
     train(args)
-
-# TODO create a test portion of data to report in dissertation, with graph of errors of training (just in case)

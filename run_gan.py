@@ -19,6 +19,7 @@ from utils_attention import attention_models_and_config_classes
 from utils_embedding_model import feature_loader, load_features, save_features
 from utils_classifier import classifier_models_and_config_classes, flip_labels
 from utils_generator import generator_models_and_config_classes
+from utils_ablation import ablation
 
 # logging
 logger = logging.getLogger(__name__)
@@ -107,12 +108,13 @@ def load_and_cache_features(args, tokenizer, subset):
     all_input_ids = torch.tensor(select_field(features, 'input_ids'), dtype=torch.long)
     all_input_mask = torch.tensor(select_field(features, 'input_mask'), dtype=torch.long)
     all_token_type_mask = torch.tensor(select_field(features, 'token_type_mask'), dtype=torch.long)
-    all_attention_mask = torch.tensor(select_field(features, 'attention_mask'), dtype=torch.long)
+    all_attention_mask = torch.tensor(select_field(features, 'attention_mask'), dtype=torch.float)
     all_labels = torch.tensor(label_map([f.label for f in features], num_choices=4), dtype=torch.float)
 
     dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_mask, all_attention_mask, all_labels)
 
     return dataset
+
 
 def inititalize_models(args, tokenizer):
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
@@ -240,11 +242,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # Train generator
             generatorM.train()
-            # attentionM.train()
+            attentionM.eval()
 
-            with torch.no_grad():
-                # this changes the 'my_attention_masks' input to highlight which words should be changed
-                fake_inputs = attentionM(**inputs)
+            # this changes the 'my_attention_masks' input to highlight which words should be changed
+            fake_inputs = attentionM(**inputs)
             logger.info('Attention success!')
 
             # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
@@ -433,6 +434,7 @@ def save_models(args, checkpoint, generatorM, classifierM):
 
     return -1
 
+
 def evaluate(args, classifierM, tokenizer, test=False):
     results = {}
 
@@ -517,7 +519,6 @@ def main():
                             help='Name of the classifier model to use')
         parser.add_argument('--classifier_model_name_or_path', default=None, type=str,
                             help='Name or path to classifier model.')
-        # TODO change attention model to train_noise to randomly select important words rathern than have it learned
         parser.add_argument('--attention_model_type', default='PMI', type=str,
                             help='Name of attention model to use')
         parser.add_argument('--attention_model_name_or_path', default=None, type=str,
@@ -538,6 +539,8 @@ def main():
                             help='Maximum number of unique words to mask in attention newtworks')
         parser.add_argument('--essential_terms_hidden_dim', type=int, default=512,
                             help='Number of hidden dimensions in essential terms model')
+        parser.add_argument('--essential_mu_p', type=float, default=0.15,
+                            help='The proportion of context ')
 
         parser.add_argument('--epochs', default=3, type=int,
                             help='Number of epochs to run training')
@@ -571,7 +574,7 @@ def main():
         parser.add_argument('--seed', default=1234, type=int,
                             help='Random seed for reproducibility')
 
-        # TODO add an all models option to load all models when evaluating
+        # TODOmaybe add an all models option to load all models when evaluating
 
         args = parser.parse_args()
     else:
@@ -585,7 +588,7 @@ def main():
                 self.generator_model_name_or_path = 'albert-base-v2'
                 self.classifier_model_type = 'linear'
                 self.classifier_model_name_or_path = 'albert-base-v2'
-                self.attention_model_type = 'PMI'
+                self.attention_model_type = 'essential'
                 self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
                 self.evaluate_during_training = False
@@ -679,9 +682,6 @@ def main():
     args.device = device
     logger.info('Using device {}'.format(args.device))
 
-    # initialize and return models
-    generatorM, attentionM, classifierM = inititalize_models(args, tokenizer)
-
     if args.use_gpu:
         logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(args.device,
                                                                                                            torch.cuda.memory_allocated(args.device)*1e-9,
@@ -689,6 +689,9 @@ def main():
         logger.info('The number of gpus available is {}'.format(torch.cuda.device_count()))
 
     if args.do_train:
+        # initialize and return models
+        generatorM, attentionM, classifierM = inititalize_models(args, tokenizer)
+
         # dataset includes: input_ids [n, 4, max_length], input_masks [n, 4, max_length], token_type_masks [n, 4, max_length]
         # attention_masks [n, 4, max_length] and labels [n, 4]
         dataset = load_and_cache_features(args, tokenizer, 'train')
