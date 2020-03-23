@@ -91,11 +91,15 @@ class ClassifierNet(torch.nn.Module):
         return x, None
 
 
-def flip_labels(labels, **kwargs):
-    # logger.info('Classifier device is {}'.format(device))
-    out_labels = torch.ones(*labels.shape).to(device) - labels
-    out_dict = {k: v for k, v in kwargs.items() if not k in ['labels']}
-    out_dict['labels'] = out_labels
+def flip_labels(classification_labels, discriminator_labels, **kwargs):
+
+    out_c_labels = torch.ones(*classification_labels.shape).to(device) - classification_labels
+    out_d_labels = torch.ones(*discriminator_labels.shape).to(device) - discriminator_labels
+
+    out_dict = {k: v for k, v in kwargs.items()}
+    out_dict['classification_labels'] = out_c_labels
+    out_dict['discriminator_labels'] = out_d_labels
+
     return out_dict
 
 
@@ -161,6 +165,9 @@ class MyAlbertForMultipleChoice(nn.Module):
         super(MyAlbertForMultipleChoice, self).__init__()
         self.albert = AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config)
 
+        self.discriminator = nn.Linear(self.albert.config.hidden_size, 1)
+
+
         self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
 
     @classmethod
@@ -170,7 +177,7 @@ class MyAlbertForMultipleChoice(nn.Module):
     def save_pretrained(self, save_directory):
         return self.albert.save_pretrained(save_directory)
 
-    def forward(self, input_ids, attention_mask, token_type_ids, labels, **kwargs):
+    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, **kwargs):
 
         if 'inputs_embeds' in kwargs:
             embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(device)
@@ -187,16 +194,34 @@ class MyAlbertForMultipleChoice(nn.Module):
                                   token_type_ids=token_type_ids,
                                   attention_mask=attention_mask)
 
+        last_hidden_state = outputs[1][0]
+        discriminator_scores = self.discriminator(last_hidden_state)
+
         classification_scores = outputs[0]
 
-        if labels is not None:
+        scores = (classification_scores, discriminator_scores)
 
-            assert classification_scores.shape == labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
-                                                                                                                           labels.shape)
-            loss = self.BCEWithLogitsLoss(classification_scores, labels)
-            return classification_scores, loss
+        if discriminator_labels is not None:
 
-        return classification_scores, None
+            assert discriminator_scores.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(discriminator_scores.shape,
+                                                                                                                                                    discriminator_labels.shape)
+
+            discriminator_loss = self.BCEWithLogitsLoss(discriminator_scores, discriminator_labels)
+
+            if classification_labels is not None:
+
+                assert classification_scores.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
+                                                                                                                                          classifier_labels.shape)
+                classification_loss = self.BCEWithLogitsLoss(classification_scores, classification_labels)
+
+            else:
+                classification_loss = None
+
+            loss = (classification_loss, discriminator_loss)
+        else:
+            loss = (None, None)
+
+        return scores, loss
 
 class MyBertForMultipleChoice(nn.Module):
     def __init__(self, pretrained_model_name_or_path, config):

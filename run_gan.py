@@ -109,9 +109,10 @@ def load_and_cache_features(args, tokenizer, subset):
     all_input_mask = torch.tensor(select_field(features, 'input_mask'), dtype=torch.long)
     all_token_type_mask = torch.tensor(select_field(features, 'token_type_mask'), dtype=torch.long)
     all_attention_mask = torch.tensor(select_field(features, 'attention_mask'), dtype=torch.float)
-    all_labels = torch.tensor(label_map([f.label for f in features], num_choices=4), dtype=torch.float)
+    all_classification_labels = torch.tensor(label_map([f.label for f in features], num_choices=4), dtype=torch.float)
+    all_discriminator_labels = torch.tensor(select_field(features, 'discriminator_labels'), dtype=torch.long)
 
-    dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_mask, all_attention_mask, all_labels)
+    dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_mask, all_attention_mask, all_classification_labels, all_discriminator_labels)
 
     return dataset
 
@@ -126,7 +127,8 @@ def inititalize_models(args, tokenizer):
                                       'max_attention_words': args.max_attention_words,
                                       },
                               'random': {},
-                              'essential': {'mu_p': args.essential_mu_p},
+                              'essential': {'mu_p': args.essential_mu_p,
+                                            'mask_id': tokenizer.mask_token_id},
                               }
     generator_config_dicts = {'seq': {'pretrained_model_name_or_path': 'seq',
                                       'input_dim': tokenizer.vocab_size,
@@ -152,7 +154,8 @@ def inititalize_models(args, tokenizer):
                                         'finetuning_task': 'ARC'},
                                'albert': {'pretrained_model_name_or_path': args.classifier_model_name_or_path,
                                         'num_labels': 4,
-                                        'finetuning_task': 'ARC'},
+                                        'finetuning_task': 'ARC',
+                                        'output_hidden_states': True},
                                }
 
     logger.info('Establishing config classes.')
@@ -237,7 +240,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                       'attention_mask': batch[1],
                       'token_type_ids': batch[2],
                       'my_attention_mask': batch[3],
-                      'labels': batch[4],
+                      'classification_labels': batch[4],
+                      'discriminator_labels': batch[5],
                       }
 
             # Train generator
@@ -261,14 +265,19 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             predictions, errorG = classifierM(**fake_inputs)
             logger.info('Generator classification success')
 
-            # TODO from fake_input_ids and attention masks create ablation output to study what is being generated
+            # TODO from fake_input_ids and attention masks create ablation output to study what is being generate
 
-            if errorG is None:
+            if all(errorG) is None:
                 logger.warning('ErrorG is None!')
                 raise Exception('ErrorG is None!')
 
             # based on the loss function update the parameters within the generator/ attention model
-            errorG.backward()
+
+            #errorG[0] is classification error, errorG[1] is discriminator error
+            if errorG[0] is not None:
+                errorG[0].backward()
+
+            errorG[1].backward()
 
             # print('attention model')
             # print(list(attentionM.parameters())[0].grad)
@@ -316,16 +325,25 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             predictions_real, error_real = classifierM(**inputs)
             logger.info('Classifier fake and real data success!')
 
-            if error_fake is None:
+            if all(error_fake) is None:
                 logger.warning('Error_fake is None!')
                 raise Exception('Error_fake is None!')
-            if error_real is None:
+            if all(error_real) is None:
                 logger.warning('Error_real is None!')
                 raise Exception('Error_real is None!')
 
             # calculate gradients from each loss functions
-            error_fake.backward()
-            error_real.backward()
+            # error_fake[0] is classification error, error_fake[1] is discriminator error
+            if error_fake[0] is not None:
+                error_fake[0].backward()
+
+            error_fake[1].backward()
+
+            # error_real[0] is classification error, error_real[1] is discriminator error
+            if error_real[0] is not None:
+                error_real[0].backward()
+
+            error_real[1].backward()
 
             # print('attention model')
             # print(list(attentionM.parameters())[0].grad)
@@ -358,26 +376,43 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # zero out gradient of networks
             generatorM.zero_grad()
-            # attentionM.zero_grad()
             classifierM.zero_grad()
 
             # add errors together for logging purposes
-            errorD = error_real + error_fake
+            errorD = error_real[0] + error_fake[0]
+            errorC = error_real[1] + error_fake[1]
 
             # log error for this step
             logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
-            logger.info('The classifier error is {}'.format(round(errorD.detach().item(), 3)))
+            logger.info('The classifier (classification) error is {}'.format(round(errorD.detach().item(), 3)))
+            logger.info('The classifier (discriminator) error is {}'.format(round(errorD.detach().item(), 3)))
 
-            # logging for fake and real prediction success
-            predictions_real = torch.argmax(predictions_real, dim=1)
-            predictions_fake = torch.argmin(predictions_fake, dim=1)
+            # logging for fake and real classification success
+            predictions_real_classification = torch.argmax(predictions_real[0], dim=1)
+            predictions_fake_classification = torch.argmin(predictions_fake[0], dim=1)
 
             num_training_seen += inputs['input_ids'].shape[0]
 
             num_training_correct_real += int(sum(
-                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real)]))
+                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real_classification)]))
             num_training_correct_real += int(sum(
-                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake)]))
+                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake_classification)]))
+
+            logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
+                num_training_correct_real, num_training_seen, round(num_training_correct_real/float(num_training_seen), 3)))
+            logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
+                num_training_correct_fake, num_training_seen, round(num_training_correct_fake/float(num_training_seen), 3)))
+
+            # logging for fake and real discriminator success
+            predictions_real_discriminator = torch.argmax(predictions_real[1], dim=1)
+            predictions_fake_discriminator = torch.argmin(predictions_fake[1], dim=1)
+
+            num_training_seen += inputs['input_ids'].shape[0]
+
+            num_training_correct_real += int(sum(
+                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real_discriminator)]))
+            num_training_correct_real += int(sum(
+                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake_discriminator)]))
 
             logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
                 num_training_correct_real, num_training_seen, round(num_training_correct_real/float(num_training_seen), 3)))
@@ -586,7 +621,7 @@ def main():
                 self.tokenizer_name = 'albert-base-v2'
                 self.generator_model_type = 'seq'
                 self.generator_model_name_or_path = 'albert-base-v2'
-                self.classifier_model_type = 'linear'
+                self.classifier_model_type = 'albert'
                 self.classifier_model_name_or_path = 'albert-base-v2'
                 self.attention_model_type = 'essential'
                 self.attnetion_model_name_or_path = None
