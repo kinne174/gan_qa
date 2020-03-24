@@ -1,22 +1,24 @@
 import os
-import numpy as np
-import string
-import random
+from random import shuffle
 import json_lines
 import tqdm
 import logging
+import codecs
+import nltk
+from nltk import word_tokenize
 
 logger = logging.getLogger(__name__)
 
 
 class ArcExample(object):
 
-    def __init__(self, example_id, question, contexts, endings, label):
+    def __init__(self, example_id, question, contexts, endings, classification_label, sentences_type):
         self.example_id = example_id
         self.question = question
         self.contexts = contexts
         self.endings = endings
-        self.label = label
+        self.classification_label = classification_label
+        self.sentences_type = sentences_type
 
 
 def example_loader(args, subset):
@@ -69,10 +71,80 @@ def example_loader(args, subset):
                                            question=question_text,
                                            contexts=contexts,
                                            endings=answer_texts,
-                                           label=label))
+                                           classification_label=label,
+                                           sentences_type=1))
 
             if args.cutoff is not None and len(all_examples) >= args.cutoff and subset == 'train':
                 break
+
+    if args.use_corpus:
+        keywords_list = []
+        keywords_dict = {kw: [] for kw in keywords_list}
+        logger_ind = len(all_examples)//1000
+
+        data_filename = '../ARC/ARC-V1-Feb2018-2/ARC_Corpus.txt'
+        with codecs.open(data_filename, 'r', encoding='utf-8', errors='ignore') as corpus:
+
+            all_valid_sentences = []
+            sentence_ind = 0
+            # this will show up when running on console
+            for line in tqdm.tqdm(corpus, desc='Searching corpus for examples.', mininterval=1):
+
+                # tokenize and remove words that contain non alphanumeric characters
+                sentence_words = word_tokenize(line.lower())
+                sentence_words = [w for w in sentence_words if w.isalnum()]
+                sentence = ' '.join(sentence_words)
+
+                # determine if the sentence has any domain words
+                keywords_in_sentence = [kw in sentence_words for kw in keywords_list]
+                if not any(keywords_in_sentence):
+                    continue
+                elif len(sentence_words) <= 5:
+                    continue
+                else:
+                    for kw_ind, kw_bool in keywords_in_sentence:
+                        if kw_bool:
+                            keywords_dict[keywords_list[kw_ind]].append(sentence_ind)
+
+                    all_valid_sentences.append(sentence)
+                    sentence_ind += 1
+
+        num_sentences = {10: None, 9: None, 8: None, 7: None}
+        num_sentences_to_keep = None
+        for kw, sinds in keywords_dict.items():
+            for num in num_sentences.keys():
+                num_mod = len(sinds) % num
+                if num_mod >= 5:
+                    num_sentences_to_keep = num_mod
+                    break
+                num_sentences[num] = num_mod
+            if num_sentences_to_keep is None:
+                num_sentences_to_keep = max(num_sentences.items(), key= lambda t: t[1])[0]
+
+            shuffle(sinds)
+
+            contexts = []
+            question_text = ''
+            answer_texts = [''] * 4
+            for i in range((len(sinds)//num_sentences_to_keep) + 1):
+                partitioned_sinds = sinds[i * num_sentences_to_keep:(i + 1) * num_sentences_to_keep]
+                for _ in range(4):
+                    shuffle(partitioned_sinds)
+                    contexts.append(' '.join([all_valid_sentences[sind] for sind in partitioned_sinds]))
+
+
+                # update list of examples
+                all_examples.append(ArcExample(example_id='{}-{}'.format(kw, i),
+                                               question=question_text,
+                                               contexts=contexts,
+                                               endings=answer_texts,
+                                               sentences_type=0,
+                                               classification_label=0))  # classification_label has be to be something but should be disregarded with sentence_type 0s
+
+                if len(all_examples) >= logger_ind * 1000:
+                    logger.info('Writing {}th example.'.format(logger_ind * 1000))
+                    logger_ind += 1
+
 
     # make sure there is at least one example
     assert len(all_examples) > 1

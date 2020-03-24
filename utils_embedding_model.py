@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ArcFeature(object):
-    def __init__(self, example_id, choices_features, classification_label=None):
+    def __init__(self, example_id, choices_features, sentences_type, classification_label=None):
         # label is 0,1,2,3 depending on correct answer
         self.example_id = example_id
         self.choices_features = [{
@@ -22,6 +22,7 @@ class ArcFeature(object):
             'token_type_mask': token_type_mask,
             'attention_mask': attention_mask
         } for input_ids, input_mask, token_type_mask, attention_mask in choices_features]
+        self.sentences_type = sentences_type
         self.classification_label = classification_label
         self.discriminator_labels = [1]*4
 
@@ -165,7 +166,8 @@ def feature_loader(args, tokenizer, examples):
 
         all_features.append(ArcFeature(example_id=ex.example_id,
                                        choices_features=choices_features,
-                                       label=ex.label))
+                                       sentences_type=ex.sentences_type,
+                                       classification_label=ex.classification_label,))
 
     return all_features
 
