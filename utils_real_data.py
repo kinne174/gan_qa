@@ -78,7 +78,7 @@ def example_loader(args, subset):
                 break
 
     if args.use_corpus:
-        keywords_list = []
+        keywords_list = ['plant', 'animal', 'mineral']
         keywords_dict = {kw: [] for kw in keywords_list}
         logger_ind = len(all_examples)//1000
 
@@ -99,36 +99,48 @@ def example_loader(args, subset):
                 keywords_in_sentence = [kw in sentence_words for kw in keywords_list]
                 if not any(keywords_in_sentence):
                     continue
+                # continue if sentence is too short
                 elif len(sentence_words) <= 5:
                     continue
                 else:
-                    for kw_ind, kw_bool in keywords_in_sentence:
+                    # save which sentence had the keyword in it, multiple keywords per sentence is allowed
+                    for kw_ind, kw_bool in enumerate(keywords_in_sentence):
                         if kw_bool:
                             keywords_dict[keywords_list[kw_ind]].append(sentence_ind)
 
                     all_valid_sentences.append(sentence)
                     sentence_ind += 1
 
+                if sentence_ind >= 50:
+                    # TODO dont leave this
+                    break
+
+        # sentences should be in groups of 7-10, try to maximize how many left over sentences there are (should be atleast 6 or whatevers greatest)
         num_sentences = {10: None, 9: None, 8: None, 7: None}
         num_sentences_to_keep = None
         for kw, sinds in keywords_dict.items():
             for num in num_sentences.keys():
+                # try in order from 10 - 7. If an acceptable number of leftover sentences is found keep those
                 num_mod = len(sinds) % num
-                if num_mod >= 5:
-                    num_sentences_to_keep = num_mod
+                if num_mod >= 6:
+                    num_sentences_to_keep = num
                     break
                 num_sentences[num] = num_mod
+            # if an acceptable mod isn't found use the grouping number with highest mod
             if num_sentences_to_keep is None:
                 num_sentences_to_keep = max(num_sentences.items(), key= lambda t: t[1])[0]
 
+            # not a lot of reason to shuffle here, but also not a lot of reason not too... so why not!
             shuffle(sinds)
 
-            contexts = []
+            # should be all contexts so this is just generic to keep form with questions format above
             question_text = ''
             answer_texts = [''] * 4
-            for i in range((len(sinds)//num_sentences_to_keep) + 1):
+            for i in range((len(sinds)//num_sentences_to_keep) + 1):  # +1 to make sure the leftover sentences are included
+                contexts = []
                 partitioned_sinds = sinds[i * num_sentences_to_keep:(i + 1) * num_sentences_to_keep]
                 for _ in range(4):
+                    # shuffle here to randomize order to give generator more practice seeing sentences
                     shuffle(partitioned_sinds)
                     contexts.append(' '.join([all_valid_sentences[sind] for sind in partitioned_sinds]))
 
@@ -141,9 +153,14 @@ def example_loader(args, subset):
                                                sentences_type=0,
                                                classification_label=0))  # classification_label has be to be something but should be disregarded with sentence_type 0s
 
+                # informative
                 if len(all_examples) >= logger_ind * 1000:
                     logger.info('Writing {}th example.'.format(logger_ind * 1000))
                     logger_ind += 1
+
+            # mainly for code-testing purposes
+            if args.cutoff is not None and len(all_examples) >= args.cutoff*2 and subset == 'train':
+                break
 
 
     # make sure there is at least one example

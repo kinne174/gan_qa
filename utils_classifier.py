@@ -167,8 +167,8 @@ class MyAlbertForMultipleChoice(nn.Module):
 
         self.discriminator = nn.Linear(self.albert.config.hidden_size, 1)
 
-
-        self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
+        self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
+        self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
@@ -177,7 +177,7 @@ class MyAlbertForMultipleChoice(nn.Module):
     def save_pretrained(self, save_directory):
         return self.albert.save_pretrained(save_directory)
 
-    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, **kwargs):
+    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
 
         if 'inputs_embeds' in kwargs:
             embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(device)
@@ -206,13 +206,18 @@ class MyAlbertForMultipleChoice(nn.Module):
             assert discriminator_scores.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(discriminator_scores.shape,
                                                                                                                                                     discriminator_labels.shape)
 
-            discriminator_loss = self.BCEWithLogitsLoss(discriminator_scores, discriminator_labels)
+            discriminator_loss = self.BCEWithLogitsLoss_reduc(discriminator_scores, discriminator_labels)
 
-            if classification_labels is not None:
+            if classification_labels is not None or not torch.all(torch.eq(torch.zeros_like(sentences_type), sentences_type)):
 
                 assert classification_scores.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
-                                                                                                                                          classifier_labels.shape)
-                classification_loss = self.BCEWithLogitsLoss(classification_scores, classification_labels)
+                                                                                                                                          classification_labels.shape)
+                classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(classification_scores, classification_labels)
+
+                assert classification_loss_noreduc.shape == sentences_type.shape, 'classification loss shape ({}) is no the same as sentences_type shape ({})'.format(classification_loss.shape,
+                                                                                                                                                              sentences_type.shape)
+
+                classification_loss = torch.sum(classification_loss_noreduc*sentences_type)/torch.sum(sentences_type)
 
             else:
                 classification_loss = None
