@@ -29,6 +29,9 @@ class ArcFeature(object):
 
 def feature_loader(args, tokenizer, examples):
 
+    if args.transformer_name is not 'albert':
+        raise NotImplementedError
+
     # load the model and translation dict and counter
     model, word_to_idx, _ = load_model(args)
 
@@ -97,10 +100,14 @@ def feature_loader(args, tokenizer, examples):
             context_ids = input_ids[context_beginning_ind:]
             context_tokens = tokenizer.convert_ids_to_tokens(context_ids)
 
+            # TODO make attention mask twice as long and put prediction_ind 's in the second half to identify whole words
+            # for Albert tokens, will need to change this if using something else
             if len(context_tokens) == len(predictions):
                 new_predictions = predictions
+                shared_tokens = list(range(len(predictions)))
             else:
                 new_predictions = []
+                shared_tokens = []
                 prediction_ind = 0
                 # if token is a special token then assign it zero (other than <unk>)
                 for token in context_tokens:
@@ -110,42 +117,53 @@ def feature_loader(args, tokenizer, examples):
                             prediction_ind += 1
                         else:
                             new_predictions.append(0.)
+                        shared_tokens.append(0)
                     elif token in punctuation or token == '▁':
                         new_predictions.append(0.)
                         prediction_ind += 1
+                        shared_tokens.append(0)
                     elif '▁' not in token:  # don't know what this character is, had to copy paste from debugger
                         new_predictions.append(predictions[prediction_ind-1])
+                        shared_tokens.append(prediction_ind+1)
                     else:
                         new_predictions.append(predictions[prediction_ind])
+                        shared_tokens.append(prediction_ind+1)
                         prediction_ind += 1
 
-                # This stuff should not activate but just in case...*
+                # This stuff should not activate but just in case...**
                     if prediction_ind >= len(predictions):
                         break
 
                 if len(new_predictions) > len(context_tokens):
                     new_predictions = new_predictions[:len(context_tokens)]
+                    shared_tokens = shared_tokens[:len(context_tokens)]
                 if len(new_predictions) < len(context_tokens):
                     new_predictions.extend([np.mean(predictions)]*(len(context_tokens) - len(new_predictions)))
-                # *
+                    shared_tokens.extend(shared_tokens[-1]*(len(context_tokens) - len(shared_tokens)))
+                # **
 
-            assert len(new_predictions) == sum(token_type_mask), 'There should be the same number of predictions ({}) as there are context tokens ({})'.format(len(new_predictions), sum(token_type_mask))
+            assert len(new_predictions) == len(shared_tokens) == sum(token_type_mask), 'There should be the same number of predictions ({}) as shared_tokens ({}) as there are context tokens ({})'.format(len(new_predictions), len(shared_tokens), sum(token_type_mask))
 
-            attention_mask = [0]*(context_beginning_ind) + new_predictions
+            attention_mask1 = [0]*context_beginning_ind + new_predictions
+            attention_mask2 = [0]*context_beginning_ind + shared_tokens
 
-            assert len(attention_mask) == len(input_ids), 'The length of attention_mask ({}) should be the same length as input_ids ({})'.format(len(attention_mask), len(input_ids))
+            assert len(attention_mask1) == len(attention_mask2) == len(input_ids), 'The length of attention_masks ({}) ({}) should be the same length as input_ids ({})'.format(len(attention_mask1), len(attention_mask2), len(input_ids))
 
             padding_length = args.max_length - len(input_ids)
             if padding_length > 0:
                 input_ids = input_ids + [0]*padding_length
                 token_type_mask = token_type_mask + [0]*padding_length
                 input_mask = input_mask + [0]*padding_length
-                attention_mask = attention_mask + [0.]*padding_length
+                attention_mask1 = attention_mask1 + [0.]*padding_length
+                attention_mask2 = attention_mask2 + [0]*padding_length
+
+            # concatenate lists
+            attention_mask = attention_mask1 + attention_mask2
 
             assert len(input_ids) == args.max_length
             assert len(token_type_mask) == args.max_length
             assert len(input_mask) == args.max_length
-            assert len(attention_mask) == args.max_length
+            assert len(attention_mask) == 2*args.max_length
 
             choices_features.append((input_ids, input_mask, token_type_mask, attention_mask))
 

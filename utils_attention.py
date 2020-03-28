@@ -243,14 +243,16 @@ class AttentionEssential(nn.Module):
 
     def forward(self, **kwargs):
         all_attention_mask = kwargs['my_attention_mask']
-        out_attention_mask = torch.empty(all_attention_mask.shape)
+        out_attention_mask = torch.empty((all_attention_mask.shape[0], all_attention_mask.shape[1]//2))
 
         all_input_ids = kwargs['input_ids']
         out_input_ids = torch.empty(all_input_ids.shape)
 
         for k in range(out_attention_mask.shape[0]):
             for j in range(out_attention_mask.shape[1]):
-                attention_mask = all_attention_mask[k, j, :]
+                attention_mask = all_attention_mask[k, j, :all_attention_mask.shape[1]//2].squeeze()
+                shared_tokens = all_attention_mask[k, j, all_attention_mask.shape[1]//2:].squeeze()
+
                 input_ids = all_input_ids[k, j, :]
 
                 non_zero_indices = attention_mask.nonzero().reshape((-1))
@@ -263,6 +265,8 @@ class AttentionEssential(nn.Module):
                 weighted_perm = np.random.choice(non_zero_indices, size=(non_zero_indices.shape[0],), replace=False,
                                                  p=prob_vector)
                 indices_to_mask = weighted_perm[:num_to_mask]
+                shared_tokens_to_mask = [shared_tokens[itm] for itm in indices_to_mask]
+                indices_to_mask = [i for i in range(shared_tokens.shape[0]) if shared_tokens[i] in shared_tokens_to_mask]
 
                 new_input_ids = torch.tensor([self.mask_id if i in indices_to_mask else id for i, id in enumerate(input_ids)], dtype=torch.long).reshape((-1))
 
