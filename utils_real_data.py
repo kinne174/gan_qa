@@ -6,6 +6,7 @@ import logging
 import codecs
 import nltk
 from nltk import word_tokenize
+import getpass
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ def example_loader(args, subset):
                     all_valid_sentences.append(sentence)
                     sentence_ind += 1
 
-                if sentence_ind >= 50:
+                if sentence_ind >= 50 and getpass.getuser() == 'Mitch':
                     # TODO dont leave this
                     break
 

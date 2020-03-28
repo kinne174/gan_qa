@@ -103,3 +103,5 @@ def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_pred
                     af.write('\treal: {}\n\tfake: {}\n'.format(' '.join(cw[1]), ' '.join(cw[0])))
                 af.write('\n')
             af.write('\n')
+
+    return -1
