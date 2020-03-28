@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from utils_embedding_model import ArcFeature
 from transformers import (BertForMultipleChoice, RobertaForMultipleChoice, XLMRobertaForMultipleChoice,
                           BertConfig, RobertaConfig, XLMRobertaConfig, AlbertPreTrainedModel, AlbertConfig,
@@ -54,18 +55,17 @@ class ClassifierNet(torch.nn.Module):
             nn.ReLU(inplace=True)
         )
 
-        self.out = nn.Sequential(
-            nn.Linear(self.hidden_features, 1),
-            nn.Sigmoid()
-        )
+        self.out_classification = nn.Linear(self.hidden_features, 1)
+        self.out_discriminator = nn.Linear(self.hidden_features, 1)
 
-        self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
+        self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
+        self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
 
     @classmethod
     def from_pretrained(cls, config):
         return cls(config)
 
-    def forward(self, input_ids, token_type_ids, attention_mask, labels, **kwargs):
+    def forward(self,  input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
         if 'inputs_embeds' in kwargs:
             # embedding matrix should be of dimension [vocab size, embedding dimension]
             embeddings = self.embedding.weight.to(device)
@@ -80,15 +80,43 @@ class ClassifierNet(torch.nn.Module):
             temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
 
         x = self.linear(temp_input_ids.float())
-        x = self.out(x)
+        xc = self.out_classification(x)
+        xd = self.out_discriminator
 
-        x = x.view(-1, self.num_choices)
+        xc = xc.view(-1, self.num_choices)
+        xc = F.softmax(xc, dim=1)
 
-        if labels is not None:
-            loss = self.BCEWithLogitsLoss(x, labels)
-            return x, loss
+        xd = xd.view(-1, self.num_choices)
+        xd = F.softmax(xd, dim=1)
 
-        return x, None
+        scores = (xc, xd)
+
+        if discriminator_labels is not None:
+
+            assert xd.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(xd.shape,
+                                                                                                                                  discriminator_labels.shape)
+
+            discriminator_loss = self.BCEWithLogitsLoss_reduc(xd, discriminator_labels)
+
+            if classification_labels is not None or not torch.all(torch.eq(torch.zeros_like(sentences_type), sentences_type)):
+
+                assert xc.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(xc.shape,
+                                                                                                                           classification_labels.shape)
+                classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(xc, classification_labels)
+
+                assert classification_loss_noreduc.shape == sentences_type.shape, 'classification loss shape ({}) is no the same as sentences_type shape ({})'.format(classification_loss_noreduc.shape,
+                                                                                                                                                                      sentences_type.shape)
+
+                classification_loss = torch.sum(classification_loss_noreduc*sentences_type)/torch.sum(sentences_type)
+
+            else:
+                classification_loss = None
+
+            loss = (classification_loss, discriminator_loss)
+        else:
+            loss = (None, None)
+
+        return scores, loss
 
 
 def flip_labels(classification_labels, discriminator_labels, **kwargs):
@@ -196,8 +224,10 @@ class MyAlbertForMultipleChoice(nn.Module):
 
         last_hidden_state = outputs[1][0]
         discriminator_scores = self.discriminator(last_hidden_state)
+        discriminator_scores = F.softmax(discriminator_scores, dim=1)
 
         classification_scores = outputs[0]
+        classification_scores = F.softmax(classification_scores, dim=1)
 
         scores = (classification_scores, discriminator_scores)
 
@@ -214,7 +244,7 @@ class MyAlbertForMultipleChoice(nn.Module):
                                                                                                                                           classification_labels.shape)
                 classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(classification_scores, classification_labels)
 
-                assert classification_loss_noreduc.shape == sentences_type.shape, 'classification loss shape ({}) is no the same as sentences_type shape ({})'.format(classification_loss.shape,
+                assert classification_loss_noreduc.shape == sentences_type.shape, 'classification loss shape ({}) is no the same as sentences_type shape ({})'.format(classification_loss_noreduc.shape,
                                                                                                                                                               sentences_type.shape)
 
                 classification_loss = torch.sum(classification_loss_noreduc*sentences_type)/torch.sum(sentences_type)
