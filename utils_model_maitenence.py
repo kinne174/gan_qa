@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import os
+import os, glob
 import logging
 
 from utils_classifier import classifier_models_and_config_classes
@@ -15,6 +15,8 @@ def init_weights(m):
     if type(m) == nn.Linear:
         m.weight.data.normal_(-0.01, 0.01)
         m.bias.data.fill_(0.01)
+
+# TODO create load model based on checkpoint
 
 def inititalize_models(args, tokenizer):
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
@@ -107,7 +109,7 @@ def inititalize_models(args, tokenizer):
 
 
 def save_models(args, checkpoint, generatorM, classifierM):
-    output_dir_generator = os.path.join(args.output_dir, 'checkpoint-generator-{}'.format(checkpoint))
+    output_dir_generator = os.path.join(args.output_dir, '{}-generator-{}'.format(args.transformer_name, checkpoint))
     if not os.path.exists(output_dir_generator):
         os.makedirs(output_dir_generator)
     generator_model_to_save = generatorM.module if hasattr(generatorM, 'module') else generatorM
@@ -117,7 +119,7 @@ def save_models(args, checkpoint, generatorM, classifierM):
     else:
         logger.info('Not saving generator model.')
 
-    output_dir_classifier = os.path.join(args.output_dir, 'checkpoint-classifier-{}'.format(checkpoint))
+    output_dir_classifier = os.path.join(args.output_dir, '{}-classifier-{}'.format(args.transformer_name, checkpoint))
     if not os.path.exists(output_dir_classifier):
         os.makedirs(output_dir_classifier)
     classifier_model_to_save = classifierM.module if hasattr(classifierM, 'module') else classifierM
@@ -128,3 +130,54 @@ def save_models(args, checkpoint, generatorM, classifierM):
         logger.info('Not saving classifier model.')
 
     return -1
+
+
+def load_models(args, tokenizer):
+
+
+    _, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
+    _, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
+    attention_config_class, attention_model_class = attention_models_and_config_classes[args.attention_model_type]
+
+    # load model
+    model_folders = glob.glob(os.path.join(args.output_dir, '{}_*'.format(args.transformer_name)))
+    assert len(model_folders) > 0, 'No model parameters found'
+    indices_dash = [len(mf) - mf[::-1].index('-') for mf in model_folders]
+
+    checkpoints = list(set([int(mf[id:]) for mf, id in zip(model_folders, indices_dash)]))
+
+    if not args.evaluate_all_models:
+        checkpoints = [max(checkpoints)]
+
+    models_checkpoints = []
+    for cp in checkpoints:
+        logger.info('Loading model using checkpoint {}'.format(cp))
+        classifier_folder = glob.glob(os.path.join(args.output_dir, '{}-classifier-{}'.format(args.transformer_name, cp)))
+        generator_folder = glob.glob(os.path.join(args.output_dir, '{}-generator-{}'.format(args.transformer_name, cp)))
+
+        assert len(classifier_folder) == len(generator_folder) == 1
+
+        generatorM = generator_model_class.from_pretrained(generator_folder[0], config={})
+        classifierM = classifier_model_class.from_pretrained(classifier_folder[0], config={})
+
+        attention_config_dicts = {'PMI': {'tokenizer': tokenizer,
+                                          'window_size': args.attention_window_size,
+                                          'max_attention_words': args.max_attention_words,
+                                          },
+                                  'random': {},
+                                  'essential': {'mu_p': args.essential_mu_p,
+                                                'mask_id': tokenizer.mask_token_id},
+                                  }
+        attention_config = attention_config_class.from_pretrained(**attention_config_dicts[args.attention_model_type])
+        attention_model_dicts = {'PMI': {'config': attention_config},
+                                 'random': {},
+                                 'essential': {'config': attention_config},
+                                 }
+        attentionM = attention_model_class.from_pretrained(**attention_model_dicts[args.attention_model_type])
+
+        models_checkpoints.append(((attentionM, generatorM, classifierM), cp))
+
+    return models_checkpoints
+
+
+
