@@ -6,7 +6,9 @@ import logging
 import codecs
 import nltk
 from nltk import word_tokenize
+from nltk.corpus import stopwords
 import getpass
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,12 @@ def example_loader(args, subset):
 
     all_examples = []
     data_filename = os.path.join(args.data_dir, '{}.jsonl'.format(subset))
+
+    if args.use_corpus and subset is 'train':
+        counter = Counter()
+
+    # TODO add in one hop questions by going through twice and saving added ids, creating next best words to look for with counter of common co occurances that are not stop words
+
     with open(data_filename, 'r') as file:
         jsonl_reader = json_lines.reader(file)
 
@@ -67,6 +75,22 @@ def example_loader(args, subset):
             contexts = [c['para'] for c in line['question']['choices']]
             answer_texts = [c['text'] for c in line['question']['choices']]
 
+            # find if any of the domain words are in the tokenization of the question
+            question_words = word_tokenize(question_text.lower())
+            question_in_domain = any([dw in question_words for dw in args.domain_words])
+
+            if not question_in_domain:
+                # if the question has a domain word automatically save it, otherwise check the answers too
+                for answer in answer_texts:
+                    answer_words = word_tokenize(answer.lower())
+                    question_in_domain = any([dw in answer_words for dw in args.domain_words])
+
+                    if question_in_domain:
+                        break
+
+            if not question_in_domain:
+                continue
+
             # update list of examples
             all_examples.append(ArcExample(example_id=id,
                                            question=question_text,
@@ -75,11 +99,18 @@ def example_loader(args, subset):
                                            classification_label=label,
                                            sentences_type=1))
 
+            if args.use_corpus and subset is 'train':
+                answer_words = word_tokenize(' '.join([at.lower() for at in answer_texts]))
+                all_words = question_words + answer_words
+                combined_words = set([w for w in all_words if w not in stopwords])
+                counter.update(combined_words)
+
             if args.cutoff is not None and len(all_examples) >= args.cutoff and subset == 'train':
                 break
 
-    if args.use_corpus:
-        keywords_list = ['plant', 'animal', 'mineral']
+    if args.use_corpus and subset is not 'train':
+        top_words = counter.most_common(10+len(args.domain_words))
+        keywords_list = [t[0] for t in top_words if t not in args.domain_words]
         keywords_dict = {kw: [] for kw in keywords_list}
         logger_ind = len(all_examples)//1000
 
