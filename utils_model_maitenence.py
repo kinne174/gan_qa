@@ -16,8 +16,6 @@ def init_weights(m):
         m.weight.data.normal_(-0.01, 0.01)
         m.bias.data.fill_(0.01)
 
-# TODO create load model based on checkpoint
-
 def inititalize_models(args, tokenizer):
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]

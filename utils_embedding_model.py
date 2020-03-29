@@ -100,7 +100,6 @@ def feature_loader(args, tokenizer, examples):
             context_ids = input_ids[context_beginning_ind:]
             context_tokens = tokenizer.convert_ids_to_tokens(context_ids)
 
-            # TODO make attention mask twice as long and put prediction_ind 's in the second half to identify whole words
             # for Albert tokens, will need to change this if using something else
             if len(context_tokens) == len(predictions):
                 new_predictions = predictions
