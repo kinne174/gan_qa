@@ -17,7 +17,7 @@ from utils_real_data import example_loader
 from utils_embedding_model import feature_loader, load_features, save_features
 from utils_classifier import flip_labels
 from utils_generator import generator_models_and_config_classes
-from utils_model_maitenence import inititalize_models, save_models
+from utils_model_maitenence import inititalize_models, save_models, load_models
 from utils_ablation import ablation
 
 # logging
@@ -151,6 +151,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # Train generator
             generatorM.train()
             attentionM.eval()
+            classifierM.eval()
 
             # this changes the 'my_attention_masks' input to highlight which words should be changed
             fake_inputs = attentionM(**inputs)
@@ -168,8 +169,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
             predictions, errorG = classifierM(**fake_inputs)
             logger.info('Generator classification success')
-
-            # TODO from fake_input_ids and attention masks create ablation output to study what is being generate
 
             if all(errorG) is None:
                 logger.warning('ErrorG is None!')
@@ -283,12 +282,12 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             classifierM.zero_grad()
 
             # add errors together for logging purposes
-            errorD = error_real[0] + error_fake[0]
-            errorC = error_real[1] + error_fake[1]
+            errorC = error_real[0] + error_fake[0]
+            errorD = error_real[1] + error_fake[1]
 
             # log error for this step
             logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
-            logger.info('The classifier (classification) error is {}'.format(round(errorD.detach().item(), 3)))
+            logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item(), 3)))
             logger.info('The classifier (discriminator) error is {}'.format(round(errorD.detach().item(), 3)))
 
             # logging for fake and real classification success
@@ -329,6 +328,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 assert save_models(args, global_step, generatorM, classifierM) == -1
 
                 if args.evaluate_during_training:
+
+                    assert ablation(args, tokenizer, fake_inputs, inputs, global_step, 'dev', predictions_real, predictions_fake) == -1
+
                     eval_results = evaluate(args, classifierM, tokenizer, test=False)
 
                     if eval_results['accuracy'] > best_dev_acc:
@@ -337,7 +339,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                         best_epoch = epoch
 
                     logger.info(
-                        'The dev accuracy after during training at checkpoint {} is {}, loss is {}'.format(global_step,
+                        'The dev accuracy during training at checkpoint {} is {}, loss is {}'.format(global_step,
                                                                                    round(eval_results['accuracy'], 3),
                                                                                    round(eval_results['loss'], 3)))
 
@@ -349,11 +351,17 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
     # TODOfixed when out of double for loop save model checkpoints and report best dev results
     assert save_models(args, global_step, generatorM, classifierM) == -1
 
+    if args.evaluate_during_training:
+        logger.info(
+            'The best dev accuracy after training is {}, loss is {} at epoch {}.'.format(round(best_dev_acc, 3),
+                                                                            round(best_dev_loss, 3), best_epoch))
 
-def evaluate(args, classifierM, tokenizer, test=False):
+
+def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, test=False):
     results = {}
+    subset = 'test' if test else 'dev'
 
-    eval_dataset = load_and_cache_features(args, tokenizer, subset='test' if test else 'dev')
+    eval_dataset = load_and_cache_features(args, tokenizer, subset)
 
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=min(args.batch_size, 100))
@@ -361,10 +369,14 @@ def evaluate(args, classifierM, tokenizer, test=False):
     logger.info('Starting Evaluation!')
     logger.info('Number of examples: {}'.format(len(eval_dataset)))
 
-    eval_loss = 0.
+    real_loss = 0.
     all_predictions = None
     all_labels = None
     num_steps = 0
+
+    attentionM.eval()
+    generatorM.eval()
+    classifierM.eval()
 
     for batch in tqdm(eval_dataloader, 'Evaluating'):
         classifierM.eval()
@@ -374,30 +386,46 @@ def evaluate(args, classifierM, tokenizer, test=False):
             inputs = {'input_ids': batch[0],
                       'attention_mask': batch[1],
                       'token_type_ids': batch[2],
-                      #'my_attention_mask': batch[3],
-                      'labels': batch[4],
+                      'my_attention_mask': batch[3],
+                      'classification_labels': batch[4],
+                      'discriminator_labels': batch[5],
+                      'sentences_type': batch[6],
                       }
-            eval_predictions, eval_error = classifierM(**inputs)
 
-            eval_loss += eval_error.mean().item()
+            fake_inputs = attentionM(**inputs)
+            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+            fake_inputs = generatorM(**fake_inputs)
+
+            # flip labels to represent the wrong answers are actually right
+            fake_inputs = flip_labels(**fake_inputs)
+
+            # get the predictions of which answers are the correct pairing from the classifier
+            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+            (fake_predictions, _), _ = classifierM(**fake_inputs)
+            (real_predictions, _), (real_error, _) = classifierM(**inputs)
+
+            real_loss += real_error.mean().item()
+
+        if args.do_ablation:
+            assert -1 == ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_predictions, fake_predictions)
 
         if all_predictions is None:
-            all_predictions = eval_predictions.detach().cpu().numpy()
-            all_labels = inputs['labels'].detach().cpu().numpy()
+            all_predictions = real_predictions.detach().cpu().numpy()
+            all_labels = inputs['classification_labels'].detach().cpu().numpy()
         else:
-            all_predictions = np.append(all_predictions, eval_predictions.detach().cpu().numpy(), axis=0)
-            all_labels = np.append(all_labels, inputs['labels'].detach().cpu().numpy(), axis=0)
+            all_predictions = np.append(all_predictions, real_predictions.detach().cpu().numpy(), axis=0)
+            all_labels = np.append(all_labels, inputs['classification_labels'].detach().cpu().numpy(), axis=0)
 
         num_steps += 1
 
-    eval_loss = eval_loss / num_steps
+    eval_loss = real_loss / num_steps
     all_predictions = np.argmax(all_predictions, axis=1)
     all_labels = np.argmax(all_labels, axis=1)
     accuracy = accuracy_score(all_labels, all_predictions)
     num_correct = accuracy_score(all_labels, all_predictions, normalize=False)
 
     results['accuracy'] = accuracy
-    results['number correct'] = num_correct
+    results['number correct classifications'] = num_correct
     results['number of examples'] = len(eval_dataset)
     results['loss'] = round(eval_loss, 5)
 
@@ -428,16 +456,14 @@ def main():
                             help='Folder where saved models will be written')
         parser.add_argument('--generator_model_type', default='seq', type=str,
                             help='Type of the generator model to use from {}'.format(', '.join(list(generator_models_and_config_classes.keys()))))
-        parser.add_argument('--generator_model_name_or_path', default=None, type=str,
+        parser.add_argument('--generator_model_name', default=None, type=str,
                             help='Name or path to generator model.')
         parser.add_argument('--classifier_model_type', default='linear', type=str,
                             help='Name of the classifier model to use')
-        parser.add_argument('--classifier_model_name_or_path', default=None, type=str,
+        parser.add_argument('--classifier_model_name', default=None, type=str,
                             help='Name or path to classifier model.')
         parser.add_argument('--attention_model_type', default='PMI', type=str,
                             help='Name of attention model to use')
-        parser.add_argument('--attention_model_name_or_path', default=None, type=str,
-                            help='Name or path to attention model.')
         parser.add_argument('--batch_size', type=int, default=5,
                             help='Size of each batch to be used in training')
         parser.add_argument('--max_length', type=int, default=512,
@@ -458,6 +484,10 @@ def main():
                             help='The proportion of context ')
         parser.add_argument('--use_corpus', action='store_true',
                             help='Activate to include corpus examples in features')
+        parser.add_argument('--do_ablation', action='store_true',
+                            help='While training or evaluating do ablation study')
+        parser.add_argument('--evaluate_all_models', action='store_true',
+                            help='When evaluating test or dev set, use all relevant checkpoints')
 
         parser.add_argument('--epochs', default=3, type=int,
                             help='Number of epochs to run training')
@@ -491,8 +521,6 @@ def main():
         parser.add_argument('--seed', default=1234, type=int,
                             help='Random seed for reproducibility')
 
-        # TODOmaybe add an all models option to load all models when evaluating
-
         args = parser.parse_args()
     else:
         class Args(object):
@@ -502,11 +530,10 @@ def main():
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'albert-base-v2'
                 self.generator_model_type = 'seq'
-                self.generator_model_name_or_path = 'albert-base-v2'
+                self.generator_model_name = 'albert-base-v2'
                 self.classifier_model_type = 'albert'
-                self.classifier_model_name_or_path = 'albert-base-v2'
+                self.classifier_model_name = 'albert-base-v2'
                 self.attention_model_type = 'essential'
-                self.attnetion_model_name_or_path = None
                 self.transformer_name = 'albert'
                 self.evaluate_during_training = False
                 self.cutoff = 50
@@ -520,7 +547,7 @@ def main():
                 self.do_train = True
                 self.use_gpu = False
                 self.overwrite_output_dir = True
-                self.overwrite_cache_dir = False
+                self.overwrite_cache_dir = True
                 self.clear_output_dir = False
                 self.seed = 1234
                 self.max_length = 512
@@ -532,6 +559,8 @@ def main():
                 self.essential_terms_hidden_dim = 100
                 self.essential_mu_p = 0.05
                 self.use_corpus = True
+                self.evaluate_all_models = True
+                self.do_ablation = True
 
         args = Args()
 
@@ -618,23 +647,24 @@ def main():
 
 
     if args.do_evaluate_dev:
-        eval_results = evaluate(args, classifierM, tokenizer)
-        logger.info('The dev accuracy after training is {}, loss is {}'.format(round(eval_results['accuracy'], 3),
-                                                                               round(eval_results['loss'], 3)))
+        models_checkpoints = load_models(args, tokenizer)
+        for (attentionM, generatorM, classifierM), cp in models_checkpoints:
+            eval_results = evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
+            logger.info('The dev accuracy for checkpoint {} is {}, loss is {}'.format(cp, round(eval_results['accuracy'], 3),
+                                                                                       round(eval_results['loss'], 3)))
 
     if args.do_evaluate_test:
-        eval_results = evaluate(args, classifierM, tokenizer, test=True)
-        logger.info('The test accuracy after training is {}, loss is {}'.format(round(eval_results['accuracy'], 3),
-                                                                               round(eval_results['loss'], 3)))
-
-    # TODO do an ablation study on generator and classifier outputs
+        models_checkpoints = load_models(args, tokenizer)
+        for (attentionM, generatorM, classifierM), cp in models_checkpoints:
+            eval_results = evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
+            logger.info('The test accuracy for checkpoint {} is {}, loss is {}'.format(cp, round(eval_results['accuracy'], 3),
+                                                                                       round(eval_results['loss'], 3)))
 
 
 if __name__ == '__main__':
     main()
 
-# TODO pretrain/ semi supervised approach to train generator to get it comfortable with generating fake data, can use corpus one-hop sentences from questions
 # TODO try a smaller classifier and larger generator model
-# TODO include sentences from corpus, give a sentence type of 0 for corpus sentences and 1 for questions, train gan/classifier with only discriminator loss for corpus sentences
+# TODO train generator first, can lightly train with classifier, majority should be generation though, possibly later can focus on cloze but for now just get generator resutls thta can be written up
 # max length 512 batch size 2
 # max length 256 batch size 5
