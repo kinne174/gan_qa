@@ -262,8 +262,11 @@ class AttentionEssential(nn.Module):
                 non_zeros = attention_mask[non_zero_indices]
                 prob_vector = non_zeros/torch.sum(non_zeros)
 
-                weighted_perm = np.random.choice(non_zero_indices, size=(non_zero_indices.shape[0],), replace=False,
-                                                 p=prob_vector)
+                non_zero_indices_np = non_zero_indices.cpu().numpy()
+                prob_vector_np = prob_vector.cpu().numpy()
+
+                weighted_perm = np.random.choice(non_zero_indices_np, size=(non_zero_indices_np.shape[0],), replace=False,
+                                                 p=prob_vector_np)
                 indices_to_mask = weighted_perm[:num_to_mask]
                 shared_tokens_to_mask = [shared_tokens[itm] for itm in indices_to_mask]
                 indices_to_mask = [i for i in range(shared_tokens.shape[0]) if shared_tokens[i] in shared_tokens_to_mask]
