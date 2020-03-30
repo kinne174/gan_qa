@@ -9,9 +9,11 @@ from nltk import word_tokenize
 from nltk.corpus import stopwords
 import getpass
 from collections import Counter
+from string import punctuation
 
 logger = logging.getLogger(__name__)
 
+stop_words = set(stopwords.words('english'))
 
 class ArcExample(object):
 
@@ -102,15 +104,15 @@ def example_loader(args, subset):
             if args.use_corpus and subset is 'train':
                 answer_words = word_tokenize(' '.join([at.lower() for at in answer_texts]))
                 all_words = question_words + answer_words
-                combined_words = set([w for w in all_words if w not in stopwords])
+                combined_words = set([w for w in all_words if w not in stop_words and not any([c in punctuation for c in w])])
                 counter.update(combined_words)
 
             if args.cutoff is not None and len(all_examples) >= args.cutoff and subset == 'train':
                 break
 
-    if args.use_corpus and subset is not 'train':
+    if args.use_corpus and subset is 'train':
         top_words = counter.most_common(10+len(args.domain_words))
-        keywords_list = [t[0] for t in top_words if t not in args.domain_words]
+        keywords_list = [t[0] for t in top_words if t[0] not in args.domain_words]
         keywords_dict = {kw: [] for kw in keywords_list}
         logger_ind = len(all_examples)//1000
 
@@ -143,7 +145,7 @@ def example_loader(args, subset):
                     all_valid_sentences.append(sentence)
                     sentence_ind += 1
 
-                if sentence_ind >= 50 and getpass.getuser() == 'Mitch':
+                if min([len(val) for val in keywords_dict.values()]) >= 10 and getpass.getuser() == 'Mitch':
                     # TODO dont leave this
                     break
 

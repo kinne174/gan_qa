@@ -243,15 +243,15 @@ class AttentionEssential(nn.Module):
 
     def forward(self, **kwargs):
         all_attention_mask = kwargs['my_attention_mask']
-        out_attention_mask = torch.empty((all_attention_mask.shape[0], all_attention_mask.shape[1]//2))
+        out_attention_mask = torch.empty((all_attention_mask.shape[0], all_attention_mask.shape[1], all_attention_mask.shape[2]//2))
 
         all_input_ids = kwargs['input_ids']
         out_input_ids = torch.empty(all_input_ids.shape)
 
         for k in range(out_attention_mask.shape[0]):
             for j in range(out_attention_mask.shape[1]):
-                attention_mask = all_attention_mask[k, j, :all_attention_mask.shape[1]//2].squeeze()
-                shared_tokens = all_attention_mask[k, j, all_attention_mask.shape[1]//2:].squeeze()
+                attention_mask = all_attention_mask[k, j, :all_attention_mask.shape[2]//2].squeeze()
+                shared_tokens = all_attention_mask[k, j, all_attention_mask.shape[2]//2:].squeeze()
 
                 input_ids = all_input_ids[k, j, :]
 
@@ -271,7 +271,7 @@ class AttentionEssential(nn.Module):
                 new_input_ids = torch.tensor([self.mask_id if i in indices_to_mask else id for i, id in enumerate(input_ids)], dtype=torch.long).reshape((-1))
 
                 new_attention_mask = torch.tensor([1 if i in indices_to_mask else 0 for i in range(attention_mask.shape[0])], dtype=torch.long).reshape((-1,))
-                assert sum(new_attention_mask) == num_to_mask
+                assert sum(new_attention_mask) >= num_to_mask, 'Sum ({}) is not greater/ equal to num_to_mask ({})'.format(sum(new_attention_mask), num_to_mask)
 
                 out_input_ids[k, j, :] = new_input_ids
                 out_attention_mask[k, j, :] = new_attention_mask

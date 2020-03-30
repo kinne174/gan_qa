@@ -110,27 +110,28 @@ def feature_loader(args, tokenizer, examples):
                 prediction_ind = 0
                 # if token is a special token then assign it zero (other than <unk>)
                 for token in context_tokens:
-                    if token in tokenizer.all_special_tokens:
-                        if token == '<unk>':
-                            new_predictions.append(predictions[prediction_ind])
-                            prediction_ind += 1
-                        else:
+                    try:
+                        if token in tokenizer.all_special_tokens:
+                            if token == '<unk>':
+                                new_predictions.append(predictions[prediction_ind])
+                                prediction_ind += 1
+                            else:
+                                new_predictions.append(0.)
+                            shared_tokens.append(0)
+                        elif token in punctuation or token == '▁':
                             new_predictions.append(0.)
-                        shared_tokens.append(0)
-                    elif token in punctuation or token == '▁':
-                        new_predictions.append(0.)
-                        prediction_ind += 1
-                        shared_tokens.append(0)
-                    elif '▁' not in token:  # don't know what this character is, had to copy paste from debugger
-                        new_predictions.append(predictions[prediction_ind-1])
-                        shared_tokens.append(prediction_ind+1)
-                    else:
-                        new_predictions.append(predictions[prediction_ind])
-                        shared_tokens.append(prediction_ind+1)
-                        prediction_ind += 1
+                            prediction_ind += 1
+                            shared_tokens.append(0)
+                        elif '▁' not in token:  # don't know what this character is, had to copy paste from debugger
+                            new_predictions.append(predictions[prediction_ind-1])
+                            shared_tokens.append(prediction_ind+1)
+                        else:
+                            new_predictions.append(predictions[prediction_ind])
+                            shared_tokens.append(prediction_ind+1)
+                            prediction_ind += 1
 
                 # This stuff should not activate but just in case...**
-                    if prediction_ind >= len(predictions):
+                    except IndexError:
                         break
 
                 if len(new_predictions) > len(context_tokens):
@@ -138,7 +139,7 @@ def feature_loader(args, tokenizer, examples):
                     shared_tokens = shared_tokens[:len(context_tokens)]
                 if len(new_predictions) < len(context_tokens):
                     new_predictions.extend([np.mean(predictions)]*(len(context_tokens) - len(new_predictions)))
-                    shared_tokens.extend(shared_tokens[-1]*(len(context_tokens) - len(shared_tokens)))
+                    shared_tokens.extend([shared_tokens[-1]]*(len(context_tokens) - len(shared_tokens)))
                 # **
 
             assert len(new_predictions) == len(shared_tokens) == sum(token_type_mask), 'There should be the same number of predictions ({}) as shared_tokens ({}) as there are context tokens ({})'.format(len(new_predictions), len(shared_tokens), sum(token_type_mask))
