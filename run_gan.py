@@ -333,8 +333,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 if args.evaluate_during_training:
 
-                    assert ablation(args, tokenizer, fake_inputs, inputs, global_step, 'dev', predictions_real, predictions_fake) == -1
-
                     eval_results = evaluate(args, classifierM, generatorM, attentionM, tokenizer, global_step)
 
                     if eval_results['accuracy'] > best_dev_acc:
