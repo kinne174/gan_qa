@@ -122,7 +122,7 @@ def example_loader(args, subset):
             all_valid_sentences = []
             sentence_ind = 0
             # this will show up when running on console
-            for line in tqdm.tqdm(corpus, desc='Searching corpus for examples.', mininterval=1):
+            for line_ind, line in tqdm.tqdm(enumerate(corpus), desc='Searching corpus for examples.', mininterval=1):
 
                 # tokenize and remove words that contain non alphanumeric characters
                 sentence_words = word_tokenize(line.lower())
@@ -147,6 +147,9 @@ def example_loader(args, subset):
 
                 if min([len(val) for val in keywords_dict.values()]) >= 10 and getpass.getuser() == 'Mitch':
                     # TODO dont leave this
+                    break
+
+                if line_ind >= 2000000:
                     break
 
         # sentences should be in groups of 7-10, try to maximize how many left over sentences there are (should be atleast 6 or whatevers greatest)

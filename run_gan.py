@@ -464,7 +464,7 @@ def main():
                             help='Name of the classifier model to use')
         parser.add_argument('--classifier_model_name', default=None, type=str,
                             help='Name or path to classifier model.')
-        parser.add_argument('--attention_model_type', default='PMI', type=str,
+        parser.add_argument('--attention_model_type', default='essential', type=str,
                             help='Name of attention model to use')
         parser.add_argument('--batch_size', type=int, default=5,
                             help='Size of each batch to be used in training')
