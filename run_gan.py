@@ -10,6 +10,7 @@ import os
 import argparse
 import numpy as np
 from sklearn.metrics import accuracy_score
+import random
 
 from transformers import (BertTokenizer, RobertaTokenizer, DistilBertTokenizer, AlbertTokenizer)
 
@@ -35,6 +36,7 @@ TOKENIZER_CLASSES = {
 def set_seed(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    random.seed(args.seed)
     # if args.n_gpu > 0:
     #     torch.cuda.manual_seed_all(args.seed)
 
@@ -380,7 +382,10 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
     generatorM.eval()
     classifierM.eval()
 
-    for batch in tqdm(eval_dataloader, 'Evaluating'):
+    num_batches = len(eval_dataloader)
+    ablation_indices = random.sample(range(num_batches), num_batches//10)
+
+    for batch_ind, batch in tqdm(enumerate(eval_dataloader), 'Evaluating'):
         classifierM.eval()
         batch = tuple(t.to(args.device) for t in batch)
 
@@ -408,7 +413,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
 
             real_loss += real_error.mean().item()
 
-        if args.do_ablation:
+        if args.do_ablation and batch_ind in ablation_indices:
             assert -1 == ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_predictions, fake_predictions)
 
         if all_predictions is None:

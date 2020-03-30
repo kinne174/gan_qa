@@ -18,7 +18,6 @@ def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_pred
     if not os.path.exists(ablation_dir):
         os.makedirs(ablation_dir)
 
-    # TODO this is not going to work because it's going to overwrite each time
     ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}.txt'.format(checkpoint))
     if os.path.exists(ablation_filename):
         write_append_trigger = 'a'

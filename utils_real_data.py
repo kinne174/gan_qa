@@ -149,7 +149,6 @@ def example_loader(args, subset):
                     sentence_ind += 1
 
                 if min([len(val) for val in keywords_dict.values()]) >= 10 and getpass.getuser() == 'Mitch':
-                    # TODO dont leave this
                     break
 
                 if line_ind >= 5000000:
