@@ -173,9 +173,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             predictions, errorG = classifierM(**fake_inputs)
             logger.info('Generator classification success')
 
-            assert -1 == ablation(args, tokenizer, fake_inputs, inputs, global_step, 'dev', predictions[0], predictions[0])
-
-
             if all(errorG) is None:
                 logger.warning('ErrorG is None!')
                 raise Exception('ErrorG is None!')
