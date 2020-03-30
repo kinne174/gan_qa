@@ -101,9 +101,9 @@ def load_and_cache_features(args, tokenizer, subset):
     all_input_mask = torch.tensor(select_field(features, 'input_mask'), dtype=torch.long)
     all_token_type_mask = torch.tensor(select_field(features, 'token_type_mask'), dtype=torch.long)
     all_attention_mask = torch.tensor(select_field(features, 'attention_mask'), dtype=torch.float)
-    all_classification_labels = torch.tensor(label_map([f.label for f in features], num_choices=4), dtype=torch.float)
-    all_discriminator_labels = torch.tensor(select_field(features, 'discriminator_labels'), dtype=torch.long)
-    all_sentences_types = torch.tensor(select_field(features, 'sentences_type'), dtype=torch.long)
+    all_classification_labels = torch.tensor(label_map([f.classification_label for f in features], num_choices=4), dtype=torch.float)
+    all_discriminator_labels = torch.tensor([f.discriminator_labels for f in features], dtype=torch.long)
+    all_sentences_types = torch.tensor([f.sentences_type for f in features], dtype=torch.long)
 
     dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_mask, all_attention_mask, all_classification_labels, all_discriminator_labels, all_sentences_types)
 
@@ -178,7 +178,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             #errorG[0] is classification error, errorG[1] is discriminator error
             if errorG[0] is not None:
-                errorG[0].backward()
+                errorG[0].backward(retain_graph=True)
 
             errorG[1].backward()
 
@@ -238,13 +238,13 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # calculate gradients from each loss functions
             # error_fake[0] is classification error, error_fake[1] is discriminator error
             if error_fake[0] is not None:
-                error_fake[0].backward()
+                error_fake[0].backward(retain_graph=True)
 
             error_fake[1].backward()
 
             # error_real[0] is classification error, error_real[1] is discriminator error
             if error_real[0] is not None:
-                error_real[0].backward()
+                error_real[0].backward(retain_graph=True)
 
             error_real[1].backward()
 
@@ -446,6 +446,8 @@ def main():
                             help='Name of the transformer used in tokenizing in {}'.format(', '.join(list(TOKENIZER_CLASSES.keys()))))
         parser.add_argument('--tokenizer_name', default=None, type=str, required=True,
                             help='Name of the tokenizer to use from transformers package from a pretrained hf model')
+        parser.add_argument('--domain_words', default=None, nargs='+', required=True,
+                            help='Domain words to search for')
 
         # Optional
         parser.add_argument('--data_dir', default='../ARC/ARC-with-context/', type=str,
@@ -547,11 +549,11 @@ def main():
                 self.do_train = True
                 self.use_gpu = False
                 self.overwrite_output_dir = True
-                self.overwrite_cache_dir = True
+                self.overwrite_cache_dir = False
                 self.clear_output_dir = False
                 self.seed = 1234
                 self.max_length = 512
-                self.batch_size = 1
+                self.batch_size = 2
                 self.do_lower_case = True
                 self.save_steps = 2
                 self.attention_window_size = 10
@@ -561,6 +563,7 @@ def main():
                 self.use_corpus = True
                 self.evaluate_all_models = True
                 self.do_ablation = True
+                self.domain_words = ['moon', 'earth']
 
         args = Args()
 
