@@ -208,6 +208,7 @@ class Seq2Seq(nn.Module):
         # reshape input ids to resemble known form
         out_dict['input_ids'] = input_ids
         out_dict['inputs_embeds'] = onehots
+        out_dict['my_attention_mask'] = my_attention_mask
 
         return out_dict
 

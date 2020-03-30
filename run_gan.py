@@ -173,6 +173,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             predictions, errorG = classifierM(**fake_inputs)
             logger.info('Generator classification success')
 
+            assert -1 == ablation(args, tokenizer, fake_inputs, inputs, global_step, 'dev', predictions[0], predictions[0])
+
+
             if all(errorG) is None:
                 logger.warning('ErrorG is None!')
                 raise Exception('ErrorG is None!')
@@ -385,6 +388,17 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
     num_batches = len(eval_dataloader)
     ablation_indices = random.sample(range(num_batches), num_batches//10)
 
+    if args.do_ablation:
+        ablation_dir = os.path.join(args.output_dir, 'ablation_{}'.format(subset))
+
+        if not os.path.exists(ablation_dir):
+            os.makedirs(ablation_dir)
+
+        ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}.txt'.format(checkpoint))
+
+        if os.path.exists(ablation_filename):
+            os.remove(ablation_filename)
+
     for batch_ind, batch in tqdm(enumerate(eval_dataloader), 'Evaluating'):
         classifierM.eval()
         batch = tuple(t.to(args.device) for t in batch)
@@ -414,7 +428,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
             real_loss += real_error.mean().item()
 
         if args.do_ablation and batch_ind in ablation_indices:
-            assert -1 == ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_predictions, fake_predictions)
+            assert -1 == ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions)
 
         if all_predictions is None:
             all_predictions = real_predictions.detach().cpu().numpy()

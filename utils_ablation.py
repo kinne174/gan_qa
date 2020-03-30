@@ -1,24 +1,35 @@
 import torch
 import logging
 import os
+from string import punctuation
 
 # logging
 logger = logging.getLogger(__name__)
 
 
-def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_predictions, fake_predictions):
+def translate_tokens(tokens):
+
+    current_tokens = []
+    for token in tokens:
+        if '▁' not in token:  # don't know what this character is, had to copy paste from debugger
+            current_tokens.append(token)
+        else:
+            current_tokens.append(token[1:])
+
+    return current_tokens
+
+
+
+def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions):
     # print question and answers
     # for each answer print the windowed true and fake context and attention scores
     # can try to translate but not necessary on first pass
 
+    if not args.transformer_name == 'albert':
+        raise NotImplementedError
+
     assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])
 
-    ablation_dir = os.path.join(args.output_dir, 'ablation_{}'.format(subset))
-
-    if not os.path.exists(ablation_dir):
-        os.makedirs(ablation_dir)
-
-    ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}.txt'.format(checkpoint))
     if os.path.exists(ablation_filename):
         write_append_trigger = 'a'
     else:
@@ -42,52 +53,52 @@ def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_pred
         if False not in change_index_list:
             continue
 
-        input_ids = input_ids[0, :].tolist()
-
         change_index = change_index_list.index(False)
 
-        question_ids = input_ids[:change_index]
+        question_ids = input_ids[0, :][:change_index]
         question_words = tokenizer.convert_ids_to_tokens(question_ids)
-
-        seq1_end_index = inputs['token_type_mask'][i, 0, :].tolist().index(1)
 
         all_answer_words = []
         all_changed_words = []
         for j in range(4):
-            answer_ids = input_ids[change_index:seq1_end_index]
+            seq_end_index = inputs['token_type_ids'][i, j, :].tolist().index(1)
+
+            answer_ids = inputs['input_ids'][i, j, change_index:seq_end_index]
             answer_words = tokenizer.convert_ids_to_tokens(answer_ids)
             all_answer_words.append(answer_words)
 
-            pad_index = inputs['attention_mask'].tolist().index(0)
+            pad_index = inputs['attention_mask'][i, j, :].tolist().index(0)
 
-            real_ids = input_ids[seq1_end_index:pad_index]
-            fake_ids = fake_inputs['input_ids'][seq1_end_index:pad_index]
+            real_ids = inputs['input_ids'][i, j, seq_end_index:pad_index]
+            fake_ids = fake_inputs['input_ids'][i, j, seq_end_index:pad_index]
 
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
             fake_words = tokenizer.convert_ids_to_tokens(fake_ids)
 
             window_size = 4
-            my_attention_mask = inputs['my_attention_mask'][i, j, :].tolist()
+            my_attention_mask = fake_inputs['my_attention_mask'][i, j, seq_end_index:pad_index].tolist()
 
-            assert len(real_words) == len(fake_words) == len(my_attention_mask)
+            assert len(real_words) == len(fake_words) == len(my_attention_mask), 'Len of real_words ({}), len of fake_words ({}) and len of my_attention_mask ({}) does not match'.format(len(real_words),
+                                                                                                                                                                                          len(fake_words),
+                                                                                                                                                                                          len(my_attention_mask))
 
             changed_words = []
 
-            for k in range(len(my_attention_mask)):
-                if k == 1:
-                    windowed_fake_words = fake_words[max(0, k-window_size):k] + ['*'] + fake_words[k] + ['*'] + fake_words[k+1:min(k+window_size, len(fake_words))]
-                    windowed_real_words = real_words[max(0, k-window_size):k] + ['*'] + real_words[k] + ['*'] + real_words[k+1:min(k+window_size, len(real_words))]
+            for k, att in enumerate(my_attention_mask):
+                if att == 1:
+                    windowed_fake_words = fake_words[max(0, k-window_size):k] + ['*'] + [fake_words[k]] + ['*'] + fake_words[k+1:min(k+window_size, len(fake_words))]
+                    windowed_real_words = real_words[max(0, k-window_size):k] + ['*'] + [real_words[k]] + ['*'] + real_words[k+1:min(k+window_size, len(real_words))]
 
                     changed_words.append((windowed_fake_words, windowed_real_words))
             all_changed_words.append(changed_words)
 
-        current_real_label = inputs['labels'][i, :]
-        current_fake_label = fake_inputs['labels'][i, :]
+        current_real_label = inputs['classification_labels'][i, :]
+        current_fake_label = fake_inputs['classification_labels'][i, :]
         correct_real_label = [' ' if lab == 0 else '*r' for lab in current_real_label]
         correct_fake_label = [' ' if lab == 0 else '*f' for lab in current_fake_label]
 
-        current_real_prediction = torch.argmax(real_predictions[i, :], dim=1)
-        current_fake_prediction = torch.argmin(fake_predictions[i, :], dim=1)
+        current_real_prediction = torch.argmax(real_predictions[i, :])
+        current_fake_prediction = torch.argmin(fake_predictions[i, :])
 
         real_predicted_label = [' '] * 4
         real_predicted_label[current_real_prediction.item()] = '#r'
@@ -101,13 +112,17 @@ def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_pred
         answer_features = list(map(tuple, zip(all_changed_words, real_predicted_label, correct_real_label, fake_predicted_label, correct_fake_label, real_softmaxed_scores, fake_softmaxed_scores, all_answer_words, answer_letters)))
 
         with open(ablation_filename, write_append_trigger) as af:
-            af.write('{}. {}\n'.format(i+1, ' '.join(question_words)))
+            question_words = translate_tokens(question_words)
+            af.write('** {}\n'.format(' '.join(question_words)))
 
             for (acw, rpl, crl, fpl, cfl, rss, fss, aw, al) in answer_features:
-                af.write('{} {} {} {} {} {} {}{}\n'.format(crl, rpl, rss, cfl, fpl, fss ,al, ' '.join(aw)))
+                aw = translate_tokens(aw)
+                af.write('{} {} {} {} {} {} {}{}\n'.format(crl, rpl, rss, cfl, fpl, fss, al, ' '.join(aw)))
                 for cw in acw:
                     # cw should be a tuple with the fake words in 0 and real words in 1
-                    af.write('\treal: {}\n\tfake: {}\n'.format(' '.join(cw[1]), ' '.join(cw[0])))
+                    fake_words = translate_tokens(cw[0])
+                    real_words = translate_tokens(cw[1])
+                    af.write('\treal: {}\n\tfake: {}\n\n'.format(' '.join(real_words), ' '.join(fake_words)))
                 af.write('\n')
             af.write('\n')
 
