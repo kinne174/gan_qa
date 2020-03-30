@@ -294,34 +294,35 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             logger.info('The classifier (discriminator) error is {}'.format(round(errorD.detach().item(), 3)))
 
             # logging for fake and real classification success
-            predictions_real_classification = torch.argmax(predictions_real[0], dim=1)
-            predictions_fake_classification = torch.argmin(predictions_fake[0], dim=1)
+            # predictions_real_classification = torch.argmax(predictions_real[0], dim=1)
+            # predictions_fake_classification = torch.argmin(predictions_fake[0], dim=1)
 
             num_training_seen += inputs['input_ids'].shape[0]
 
-            num_training_correct_real_classifier += int(sum(
-                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real_classification)]))
-            num_training_correct_fake_classifier += int(sum(
-                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake_classification)]))
+            # num_training_correct_real_classifier += int(sum(
+            #     [inputs['classification_labels'][i, p].item() for i, p in zip(range(inputs['classification_labels'].shape[0]), predictions_real_classification)]))
+            # num_training_correct_fake_classifier += int(sum(
+            #     [inputs['classification_labels'][i, p].item() for i, p in zip(range(inputs['classification_labels'].shape[0]), predictions_fake_classification)]))
+            #
+            # logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
+            #     num_training_correct_real_classifier, num_training_seen, round(num_training_correct_real_classifier/float(num_training_seen), 3)))
+            # logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
+            #     num_training_correct_fake_classifier, num_training_seen, round(num_training_correct_fake_classifier/float(num_training_seen), 3)))
 
-            logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_real_classifier, num_training_seen, round(num_training_correct_real_classifier/float(num_training_seen), 3)))
-            logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_fake_classifier, num_training_seen, round(num_training_correct_fake_classifier/float(num_training_seen), 3)))
-
+            # TODO this needs to be fixed to reflect that all the real should be close to 1 and all fake should be close to 0.
             # logging for fake and real discriminator success
-            predictions_real_discriminator = torch.argmax(predictions_real[1], dim=1)
-            predictions_fake_discriminator = torch.argmin(predictions_fake[1], dim=1)
-
-            num_training_correct_real_discriminator += int(sum(
-                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real_discriminator)]))
-            num_training_correct_fake_discriminator += int(sum(
-                [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake_discriminator)]))
-
-            logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_real_discriminator, num_training_seen, round(num_training_correct_real_discriminator/float(num_training_seen), 3)))
-            logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_fake_discriminator, num_training_seen, round(num_training_correct_fake_discriminator/float(num_training_seen), 3)))
+            # predictions_real_discriminator = torch.argmax(predictions_real[1], dim=1)
+            # predictions_fake_discriminator = torch.argmin(predictions_fake[1], dim=1)
+            #
+            # num_training_correct_real_discriminator += int(sum(
+            #     [inputs['discriminator_labels'][i, p].item() for i, p in zip(range(inputs['discriminator_labels'].shape[0]), predictions_real_discriminator)]))
+            # num_training_correct_fake_discriminator += int(sum(
+            #     [inputs['discriminator_labels'][i, p].item() for i, p in zip(range(inputs['discriminator_labels'].shape[0]), predictions_fake_discriminator)]))
+            #
+            # logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
+            #     num_training_correct_real_discriminator, num_training_seen, round(num_training_correct_real_discriminator/float(num_training_seen), 3)))
+            # logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
+            #     num_training_correct_fake_discriminator, num_training_seen, round(num_training_correct_fake_discriminator/float(num_training_seen), 3)))
 
             # save models in cache dir
             if global_step % args.save_steps == 0 and global_step is not 0:
