@@ -131,7 +131,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size))
 
         num_training_seen = 0
-        num_training_correct_real, num_training_correct_fake = 0, 0
+        num_training_correct_real_classifier, num_training_correct_fake_classifier = 0, 0
+        num_training_correct_real_discriminator, num_training_correct_fake_discriminator = 0, 0
         for iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
 
@@ -273,6 +274,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                                                                                                                   iterate))
                 # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
+            # TODO before stepping should figure out a way to keep adding up until large batch size is achieved
+
             # update classifier parameters
             classifierO.step()
             logger.info('Classifier step success!')
@@ -286,7 +289,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             errorD = error_real[1] + error_fake[1]
 
             # log error for this step
-            logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
+            # logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
             logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item(), 3)))
             logger.info('The classifier (discriminator) error is {}'.format(round(errorD.detach().item(), 3)))
 
@@ -296,31 +299,29 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             num_training_seen += inputs['input_ids'].shape[0]
 
-            num_training_correct_real += int(sum(
+            num_training_correct_real_classifier += int(sum(
                 [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real_classification)]))
-            num_training_correct_real += int(sum(
+            num_training_correct_fake_classifier += int(sum(
                 [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake_classification)]))
 
             logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_real, num_training_seen, round(num_training_correct_real/float(num_training_seen), 3)))
+                num_training_correct_real_classifier, num_training_seen, round(num_training_correct_real_classifier/float(num_training_seen), 3)))
             logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_fake, num_training_seen, round(num_training_correct_fake/float(num_training_seen), 3)))
+                num_training_correct_fake_classifier, num_training_seen, round(num_training_correct_fake_classifier/float(num_training_seen), 3)))
 
             # logging for fake and real discriminator success
             predictions_real_discriminator = torch.argmax(predictions_real[1], dim=1)
             predictions_fake_discriminator = torch.argmin(predictions_fake[1], dim=1)
 
-            num_training_seen += inputs['input_ids'].shape[0]
-
-            num_training_correct_real += int(sum(
+            num_training_correct_real_discriminator += int(sum(
                 [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_real_discriminator)]))
-            num_training_correct_real += int(sum(
+            num_training_correct_fake_discriminator += int(sum(
                 [inputs['labels'][i, p].item() for i, p in zip(range(inputs['labels'].shape[0]), predictions_fake_discriminator)]))
 
             logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_real, num_training_seen, round(num_training_correct_real/float(num_training_seen), 3)))
+                num_training_correct_real_discriminator, num_training_seen, round(num_training_correct_real_discriminator/float(num_training_seen), 3)))
             logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
-                num_training_correct_fake, num_training_seen, round(num_training_correct_fake/float(num_training_seen), 3)))
+                num_training_correct_fake_discriminator, num_training_seen, round(num_training_correct_fake_discriminator/float(num_training_seen), 3)))
 
             # save models in cache dir
             if global_step % args.save_steps == 0 and global_step is not 0:
@@ -331,7 +332,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                     assert ablation(args, tokenizer, fake_inputs, inputs, global_step, 'dev', predictions_real, predictions_fake) == -1
 
-                    eval_results = evaluate(args, classifierM, tokenizer, test=False)
+                    eval_results = evaluate(args, classifierM, generatorM, attentionM, tokenizer, global_step)
 
                     if eval_results['accuracy'] > best_dev_acc:
                         best_dev_acc = eval_results['accuracy']
@@ -659,7 +660,7 @@ def main():
     if args.do_evaluate_test:
         models_checkpoints = load_models(args, tokenizer)
         for (attentionM, generatorM, classifierM), cp in models_checkpoints:
-            eval_results = evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
+            eval_results = evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp, test=True)
             logger.info('The test accuracy for checkpoint {} is {}, loss is {}'.format(cp, round(eval_results['accuracy'], 3),
                                                                                        round(eval_results['loss'], 3)))
 
