@@ -259,8 +259,8 @@ class AttentionEssential(nn.Module):
 
                 num_to_mask = int(non_zero_indices.shape[0]*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
 
-                non_zeros = np.array(attention_mask[non_zero_indices])
-                prob_vector = non_zeros/np.sum(non_zeros)
+                non_zeros = attention_mask[non_zero_indices]
+                prob_vector = non_zeros/torch.sum(non_zeros)
 
                 weighted_perm = np.random.choice(non_zero_indices, size=(non_zero_indices.shape[0],), replace=False,
                                                  p=prob_vector)
