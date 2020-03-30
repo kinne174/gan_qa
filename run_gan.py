@@ -572,7 +572,7 @@ def main():
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO,
-                        filename='logging/logging_{}'.format(num_logging_files))
+                        filename='logging/logging_g-{}_c-{}_*'.format(args.generator_model_type, args.classifier_model_type))
 
     if not os.path.exists(args.output_dir):
         raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
