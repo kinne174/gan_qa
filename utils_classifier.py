@@ -206,6 +206,7 @@ class MyAlbertForMultipleChoice(nn.Module):
         return self.albert.save_pretrained(save_directory)
 
     def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
+        batch_size = input_ids.shape[0]
 
         if 'inputs_embeds' in kwargs:
             embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(device)
@@ -222,9 +223,9 @@ class MyAlbertForMultipleChoice(nn.Module):
                                   token_type_ids=token_type_ids,
                                   attention_mask=attention_mask)
 
-        last_hidden_state = outputs[1][0]
-        discriminator_scores = self.discriminator(last_hidden_state)
-        discriminator_scores = F.softmax(discriminator_scores, dim=1)
+        last_cls_hidden_state = outputs[1][0][:, 0, :].squeeze().view((batch_size, 4, -1))
+        discriminator_scores = self.discriminator(last_cls_hidden_state)
+        discriminator_scores = F.softmax(discriminator_scores.squeeze(), dim=1)
 
         classification_scores = outputs[0]
         classification_scores = F.softmax(classification_scores, dim=1)
@@ -238,16 +239,18 @@ class MyAlbertForMultipleChoice(nn.Module):
 
             discriminator_loss = self.BCEWithLogitsLoss_reduc(discriminator_scores, discriminator_labels)
 
-            if classification_labels is not None or not torch.all(torch.eq(torch.zeros_like(sentences_type), sentences_type)):
+            if classification_labels is not None and not torch.all(torch.eq(torch.zeros_like(sentences_type), sentences_type)):
 
                 assert classification_scores.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
                                                                                                                                           classification_labels.shape)
                 classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(classification_scores, classification_labels)
 
-                assert classification_loss_noreduc.shape == sentences_type.shape, 'classification loss shape ({}) is no the same as sentences_type shape ({})'.format(classification_loss_noreduc.shape,
+                sentences_type_multiplier = sentences_type.unsqueeze(1)*torch.ones_like(classification_loss_noreduc)
+
+                assert classification_loss_noreduc.shape == sentences_type_multiplier.shape, 'classification loss shape ({}) is not the same as sentences_type shape ({})'.format(classification_loss_noreduc.shape,
                                                                                                                                                               sentences_type.shape)
 
-                classification_loss = torch.sum(classification_loss_noreduc*sentences_type)/torch.sum(sentences_type)
+                classification_loss = torch.sum(classification_loss_noreduc*sentences_type_multiplier)/(torch.sum(sentences_type) * 4)
 
             else:
                 classification_loss = None
