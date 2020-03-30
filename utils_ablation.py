@@ -30,17 +30,19 @@ def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_pred
             af.write('The two scores in parentheses are the score for the real and the fake respectively\n')
             af.write('\n*********************************************************************************\n')
 
-    assert inputs['input_ids'].shape[0] == fake_inputs['input_ids'].shape[0], 'inputs shape ({}) is not the same as fake_inputs shape ({})'.format(inputs['input_ids'].shape[0], fake_inputs['input_ids'].shape[0])
+    assert inputs['input_ids'].shape[0] == fake_inputs['input_ids'].shape[0], 'inputs batch size ({}) is not the same as fake_inputs batch size ({})'.format(inputs['input_ids'].shape[0], fake_inputs['input_ids'].shape[0])
     batch_size = inputs['input_ids'].shape[0]
 
     answer_letters = ['A.', 'B.', 'C.', 'D.']
 
     for i in range(batch_size):
-        input_ids = inputs['input_ids'][i, 0, :].tolist()
+        input_ids = inputs['input_ids'][i, :, :]
         change_index_list = [input_ids[1, i] == input_ids[2, i] == input_ids[3, i] == input_ids[0, i] for i in
                              range(input_ids.shape[1])]
         if False not in change_index_list:
             continue
+
+        input_ids = input_ids[0, :].tolist()
 
         change_index = change_index_list.index(False)
 
