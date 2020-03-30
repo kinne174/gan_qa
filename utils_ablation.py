@@ -11,22 +11,28 @@ def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_pred
     # for each answer print the windowed true and fake context and attention scores
     # can try to translate but not necessary on first pass
 
-    assert fake_inputs.shape[1] == inputs.shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs.shape[1], inputs.shape[1])
+    assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])
 
     ablation_dir = os.path.join(args.output_dir, 'ablation_{}'.format(subset))
 
     if not os.path.exists(ablation_dir):
         os.makedirs(ablation_dir)
 
+    # TODO this is not going to work because it's going to overwrite each time
     ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}.txt'.format(checkpoint))
-    with open(ablation_filename, 'w') as af:
-        af.write('Ablation Study start:\n')
-        af.write('Reported is the question, answer, score for the answers and how the context was changed to fool the classifier.\n')
-        af.write('The two scores in parentheses are the score for the real and the fake respectively\n')
-        af.write('\n*********************************************************************************\n')
+    if os.path.exists(ablation_filename):
+        write_append_trigger = 'a'
+    else:
+        write_append_trigger = 'w'
 
-    assert inputs.shape[0] == fake_inputs.shape[0], 'inputs shape ({}) is not the same as fake_inputs shape ({})'.format(inputs.shape[0],fake_inputs.shape[0])
-    batch_size = inputs.shape[0]
+        with open(ablation_filename, write_append_trigger) as af:
+            af.write('Ablation Study start:\n')
+            af.write('Reported is the question, answer, score for the answers and how the context was changed to fool the classifier.\n')
+            af.write('The two scores in parentheses are the score for the real and the fake respectively\n')
+            af.write('\n*********************************************************************************\n')
+
+    assert inputs['input_ids'].shape[0] == fake_inputs['input_ids'].shape[0], 'inputs shape ({}) is not the same as fake_inputs shape ({})'.format(inputs['input_ids'].shape[0], fake_inputs['input_ids'].shape[0])
+    batch_size = inputs['input_ids'].shape[0]
 
     answer_letters = ['A.', 'B.', 'C.', 'D.']
 
@@ -93,7 +99,7 @@ def ablation(args, tokenizer, fake_inputs, inputs, checkpoint, subset, real_pred
         assert len(all_changed_words) == len(real_predicted_label) == len(correct_real_label) == len(fake_predicted_label) == len(correct_fake_label) == len(real_softmaxed_scores) == len(fake_softmaxed_scores) == len(all_answer_words) == len(answer_letters)
         answer_features = list(map(tuple, zip(all_changed_words, real_predicted_label, correct_real_label, fake_predicted_label, correct_fake_label, real_softmaxed_scores, fake_softmaxed_scores, all_answer_words, answer_letters)))
 
-        with open(ablation_filename, 'a') as af:
+        with open(ablation_filename, write_append_trigger) as af:
             af.write('{}. {}\n'.format(i+1, ' '.join(question_words)))
 
             for (acw, rpl, crl, fpl, cfl, rss, fss, aw, al) in answer_features:

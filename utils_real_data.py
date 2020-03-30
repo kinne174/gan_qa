@@ -152,7 +152,7 @@ def example_loader(args, subset):
                     # TODO dont leave this
                     break
 
-                if line_ind >= 25000:
+                if line_ind >= 5000000:
                     break
 
         # sentences should be in groups of 7-10, try to maximize how many left over sentences there are (should be atleast 6 or whatevers greatest)
