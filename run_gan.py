@@ -102,7 +102,7 @@ def load_and_cache_features(args, tokenizer, subset):
     all_token_type_mask = torch.tensor(select_field(features, 'token_type_mask'), dtype=torch.long)
     all_attention_mask = torch.tensor(select_field(features, 'attention_mask'), dtype=torch.float)
     all_classification_labels = torch.tensor(label_map([f.classification_label for f in features], num_choices=4), dtype=torch.float)
-    all_discriminator_labels = torch.tensor([f.discriminator_labels for f in features], dtype=torch.long)
+    all_discriminator_labels = torch.tensor([f.discriminator_labels for f in features], dtype=torch.float)
     all_sentences_types = torch.tensor([f.sentences_type for f in features], dtype=torch.long)
 
     dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_mask, all_attention_mask, all_classification_labels, all_discriminator_labels, all_sentences_types)
@@ -533,7 +533,7 @@ def main():
                 self.tokenizer_name = 'albert-base-v2'
                 self.generator_model_type = 'seq'
                 self.generator_model_name = 'albert-base-v2'
-                self.classifier_model_type = 'albert'
+                self.classifier_model_type = 'linear'
                 self.classifier_model_name = 'albert-base-v2'
                 self.attention_model_type = 'essential'
                 self.transformer_name = 'albert'
@@ -572,7 +572,7 @@ def main():
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO,
-                        filename='logging/logging_g-{}_c-{}_*'.format(args.generator_model_type, args.classifier_model_type))
+                        filename='logging/logging_g-{}_c-{}_{}'.format(args.generator_model_type, args.classifier_model_type, num_logging_files))
 
     if not os.path.exists(args.output_dir):
         raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
