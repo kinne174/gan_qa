@@ -29,7 +29,7 @@ class ArcFeature(object):
 
 def feature_loader(args, tokenizer, examples):
 
-    if args.transformer_name is not 'albert':
+    if not args.transformer_name == 'albert':
         logger.warning('The transformer name is {}'.format(args.transformer_name))
         raise NotImplementedError
 

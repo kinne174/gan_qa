@@ -110,6 +110,9 @@ def example_loader(args, subset):
             if args.cutoff is not None and len(all_examples) >= args.cutoff and subset == 'train':
                 break
 
+            num_examples = len(all_examples)
+            logger.info('The number of questions found with domain words "{}" is {}'.format(' '.join(args.domain_words), num_examples))
+
     if args.use_corpus and subset is 'train':
         top_words = counter.most_common(10+len(args.domain_words))
         keywords_list = [t[0] for t in top_words if t[0] not in args.domain_words]
@@ -194,6 +197,10 @@ def example_loader(args, subset):
                 if len(all_examples) >= logger_ind * 1000:
                     logger.info('Writing {}th example.'.format(logger_ind * 1000))
                     logger_ind += 1
+
+
+                logger.info('The number of examples added with one-hop word "{}" is {}'.format(kw, len(all_examples)-num_examples))
+                num_examples = len(all_examples)
 
             # mainly for code-testing purposes
             if args.cutoff is not None and len(all_examples) >= args.cutoff*2 and subset == 'train':
