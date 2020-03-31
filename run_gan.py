@@ -199,7 +199,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 #     errorG_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
                 #     errorG_c.backward(retain_graph=True)
 
-                errorG_d /= len(batch[6])
+                errorG_d /= args.minibatch_size
                 errorG_d.backward()
 
                 minibatch_error_generator_d += errorG_d.detach().item()
@@ -259,7 +259,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 #     error_real_c.backward(retain_graph=True)
                 #     no_classifier_error = False
 
-                error_real_d /= len(batch[6])
+                error_real_d /= args.minibatch_size
                 error_real_d.backward()
 
                 minibatch_error_classifier_d += error_real_d.detach().item()
