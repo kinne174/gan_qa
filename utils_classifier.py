@@ -72,15 +72,23 @@ class ClassifierNet(torch.nn.Module):
     def from_pretrained(cls, config):
         return cls(config)
 
-    def forward(self, input_ids, inputs_embeds, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
-        # embedding matrix should be of dimension [vocab size, embedding dimension]
-        embeddings = self.embedding.weight.to(device)
+    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
 
-        # input_embeds should be of dimension [4*batch size*max length, vocab size]
-        assert inputs_embeds.is_sparse
+        if 'inputs_embeds' in kwargs:
+            inputs_embeds = kwargs['inputs_embeds']
 
-        temp_input_ids = torch.sparse.mm(inputs_embeds, embeddings)
-        temp_input_ids = temp_input_ids.view(input_ids.shape[0]*4, input_ids.shape[-1], -1)
+            # embedding matrix should be of dimension [vocab size, embedding dimension]
+            embedding_mat = self.embedding.weight.to(device)
+
+            # input_embeds should be of dimension [4*batch size*max length, vocab size]
+            assert inputs_embeds.is_sparse
+
+            temp_input_ids = torch.sparse.mm(inputs_embeds, embedding_mat)
+            temp_input_ids = temp_input_ids.view(input_ids.shape[0]*4, input_ids.shape[-1], -1)
+        else:
+            temp_input_ids = self.embedding(input_ids.view(-1, input_ids.shape[-1]))
+
+
 
         # TODO do a while loop here on attention mask and break once it equals zero
         gru_out, last_hidden = self.gru(temp_input_ids)
