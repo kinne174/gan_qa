@@ -154,7 +154,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # Train generator
             generatorM.train()
             attentionM.eval()
-            classifierM.eval()
+            # Train classifier
+            classifierM.train()
 
             # this changes the 'my_attention_masks' input to highlight which words should be changed
             fake_inputs = attentionM(**inputs)
@@ -219,9 +220,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             generatorM.zero_grad()
             # attentionM.zero_grad()
             classifierM.zero_grad()
-
-            # Train classifier
-            classifierM.train()
 
             # detach the inputs so the gradient graphs don't reach back, only need them for classifier
             fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
