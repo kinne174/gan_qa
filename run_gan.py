@@ -394,7 +394,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
         if os.path.exists(ablation_filename):
             os.remove(ablation_filename)
 
-    for batch_ind, batch in tqdm(enumerate(eval_dataloader), 'Evaluating'):
+    for batch_ind, batch in tqdm(enumerate(eval_dataloader), 'Evaluating {} batches of batch size {} from subset {}'.format(num_batches, min(args.batch_size, 100), subset)):
         classifierM.eval()
         batch = tuple(t.to(args.device) for t in batch)
 

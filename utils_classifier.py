@@ -44,19 +44,24 @@ class ClassifierNet(torch.nn.Module):
     def __init__(self, config):
         super(ClassifierNet, self).__init__()
         self.num_choices = config.num_choices
-        self.in_features = config.in_features
-        self.hidden_features = config.hidden_features
+        self.in_dim = config.in_features
+        self.hidden_dim = config.hidden_features
 
         self.embedding = nn.Embedding(config.vocab_size, config.embedding_dimension, padding_idx=0)
 
-        self.linear = nn.Sequential(
-            nn.Linear(self.in_features, self.hidden_features, bias=True),
-            nn.BatchNorm1d(self.hidden_features),
-            nn.ReLU(inplace=True)
-        )
+        self.linear = nn.Linear(self.in_dim, self.hidden_dim, bias=True)
 
-        self.out_classification = nn.Linear(self.hidden_features, 1)
-        self.out_discriminator = nn.Linear(self.hidden_features, 1)
+        self.out_classification = nn.Sequential(nn.BatchNorm1d(self.hidden_dim),
+                                                nn.ReLU(inplace=True),
+                                                nn.Linear(self.hidden_dim, 1))
+        self.out_discriminator = nn.Sequential(nn.BatchNorm1d(self.hidden_dim),
+                                               nn.ReLU(inplace=True),
+                                               nn.Linear(self.hidden_dim, 1))
+
+        self.gru1 = nn.GRUCell(config.embedding_dimension, self.hidden_dim)
+        self.gru2 = nn.GRUCell(self.hidden_dim, self.hidden_dim)
+
+        self.gru_cells = [self.gru1, self.gru2]
 
         self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
         self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
@@ -73,13 +78,15 @@ class ClassifierNet(torch.nn.Module):
             input_embeds = kwargs['inputs_embeds']
             assert input_embeds.is_sparse
             temp_input_ids = torch.sparse.mm(input_embeds, embeddings)
-            temp_input_ids = temp_input_ids.view(*input_ids.shape, -1)
-            temp_input_ids = torch.mean(temp_input_ids, dim=-1)
-            temp_input_ids = temp_input_ids.view(-1, temp_input_ids.shape[-1])
+            temp_input_ids = temp_input_ids.view(input_ids.shape[0]*4, input_ids.shape[-1], -1)
+            # TODO do a while loop here on attention mask and break once it equals zero
+            gru_out, last_hidden = self.gru(temp_input_ids)
+            x = last_hidden[-1, :, :].squeeze()
+            # temp_input_ids = temp_input_ids.view(-1, temp_input_ids.shape[-1])
         else:
             temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+            x = self.linear(temp_input_ids.float())
 
-        x = self.linear(temp_input_ids.float())
         xc = self.out_classification(x)
         xd = self.out_discriminator(x)
 

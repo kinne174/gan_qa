@@ -110,8 +110,8 @@ def example_loader(args, subset):
             if args.cutoff is not None and len(all_examples) >= args.cutoff and subset == 'train':
                 break
 
-            num_examples = len(all_examples)
-            logger.info('The number of questions found with domain words "{}" is {}'.format(' '.join(args.domain_words), num_examples))
+    num_examples = len(all_examples)
+    logger.info('The number of questions found with domain words "{}" is {}'.format(' '.join(args.domain_words), num_examples))
 
     if args.use_corpus and subset is 'train':
         top_words = counter.most_common(10+len(args.domain_words))
