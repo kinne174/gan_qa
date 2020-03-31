@@ -285,7 +285,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             classifierM.zero_grad()
 
             # add errors together for logging purposes
-            errorC = error_real[0] + error_fake[0]
+            errorC = error_real[0] + error_fake[0] if error_real is not None else -1.
             errorD = error_real[1] + error_fake[1]
 
             # log error for this step

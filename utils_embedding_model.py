@@ -41,7 +41,7 @@ def feature_loader(args, tokenizer, examples):
     # returns a list of objects of type ArcFeature similar to hugging face transformers
     break_flag = False
     all_features = []
-    for ex_ind, ex in tqdm.tqdm(enumerate(examples), desc='Examples to Features'):
+    for ex_ind, ex in tqdm.tqdm(enumerate(examples), desc='Examples to Features, num Examples: {}'.format(len(examples))):
         if ex_ind % 1000 == 0:
             logger.info('Converting example number {} of {} to features.'.format(ex_ind, len(examples)))
         assert isinstance(ex, ArcExample)
