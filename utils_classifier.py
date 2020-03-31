@@ -58,10 +58,12 @@ class ClassifierNet(torch.nn.Module):
                                                nn.ReLU(inplace=True),
                                                nn.Linear(self.hidden_dim, 1))
 
-        self.gru1 = nn.GRUCell(config.embedding_dimension, self.hidden_dim)
-        self.gru2 = nn.GRUCell(self.hidden_dim, self.hidden_dim)
+        self.gru = nn.GRU(config.embedding_dimension, self.hidden_dim, batch_first=True, num_layers=2, dropout=0.1)
 
-        self.gru_cells = [self.gru1, self.gru2]
+        # self.gru1 = nn.GRUCell(config.embedding_dimension, self.hidden_dim)
+        # self.gru2 = nn.GRUCell(self.hidden_dim, self.hidden_dim)
+        #
+        # self.gru_cells = [self.gru1, self.gru2]
 
         self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
         self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
@@ -70,22 +72,20 @@ class ClassifierNet(torch.nn.Module):
     def from_pretrained(cls, config):
         return cls(config)
 
-    def forward(self,  input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
-        if 'inputs_embeds' in kwargs:
-            # embedding matrix should be of dimension [vocab size, embedding dimension]
-            embeddings = self.embedding.weight.to(device)
-            # input_embeds should be of dimension [4*batch size*max length, vocab size]
-            input_embeds = kwargs['inputs_embeds']
-            assert input_embeds.is_sparse
-            temp_input_ids = torch.sparse.mm(input_embeds, embeddings)
-            temp_input_ids = temp_input_ids.view(input_ids.shape[0]*4, input_ids.shape[-1], -1)
-            # TODO do a while loop here on attention mask and break once it equals zero
-            gru_out, last_hidden = self.gru(temp_input_ids)
-            x = last_hidden[-1, :, :].squeeze()
-            # temp_input_ids = temp_input_ids.view(-1, temp_input_ids.shape[-1])
-        else:
-            temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
-            x = self.linear(temp_input_ids.float())
+    def forward(self,  input_ids, input_embeds, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
+        # embedding matrix should be of dimension [vocab size, embedding dimension]
+        embeddings = self.embedding.weight.to(device)
+
+        # input_embeds should be of dimension [4*batch size*max length, vocab size]
+        assert input_embeds.is_sparse
+
+        temp_input_ids = torch.sparse.mm(input_embeds, embeddings)
+        temp_input_ids = temp_input_ids.view(input_ids.shape[0]*4, input_ids.shape[-1], -1)
+
+        # TODO do a while loop here on attention mask and break once it equals zero
+        gru_out, last_hidden = self.gru(temp_input_ids)
+
+        x = last_hidden[-1, :, :].squeeze()
 
         xc = self.out_classification(x)
         xd = self.out_discriminator(x)
