@@ -293,7 +293,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # log error for this step
             # logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
-            logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item(), 3)))
+            logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item() if not no_classifier_error else -1., 3)))
             logger.info('The classifier (discriminator) error is {}'.format(round(errorD.detach().item(), 3)))
 
             # logging for fake and real classification success
