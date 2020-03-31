@@ -116,7 +116,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
     # use pytorch data loaders to cycle through the data
     train_sampler = RandomSampler(dataset, replacement=False)
-    train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size)
+    train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size*args.minibatch_size)
 
     # optimizers
     classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
@@ -130,178 +130,201 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
     logger.info('Starting to train!')
     logger.info('There are {} examples.'.format(len(dataset)))
     for epoch, _ in enumerate(train_iterator):
-        epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size))
+        epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size*args.minibatch_size))
 
         num_training_seen = 0
         num_training_correct_real_classifier, num_training_correct_fake_classifier = 0, 0
         num_training_correct_real_discriminator, num_training_correct_fake_discriminator = 0, 0
-        for iterate, batch in enumerate(epoch_iterator):
-            logger.info('Epoch: {} Iterate: {}'.format(epoch, iterate))
+        for batch_iterate, batch in enumerate(epoch_iterator):
+            logger.info('Epoch: {} Iterate: {}'.format(epoch, batch_iterate))
 
-            # TODOfixed should I be splitting it up so that the Generator and Classifier get different input?
-            # I don't think so because the classifier is making a judgement on the data but not training in first pass, so should still give it a chance to see it in the second
-            # also don't have enough data values to afford not to pass them
-            batch = tuple(t.to(args.device) for t in batch)
-            inputs = {'input_ids': batch[0],
-                      'attention_mask': batch[1],
-                      'token_type_ids': batch[2],
-                      'my_attention_mask': batch[3],
-                      'classification_labels': batch[4],
-                      'discriminator_labels': batch[5],
-                      'sentences_type': batch[6],
-                      }
+            batch_dataset = TensorDataset(*batch)
 
-            # Train generator
-            generatorM.train()
-            attentionM.eval()
-            # Train classifier
-            classifierM.train()
+            # use pytorch data loaders to cycle through the data
+            minibatch_sampler = SequentialSampler(batch_dataset)
+            minibatch_dataloader = DataLoader(batch_dataset, sampler=minibatch_sampler, batch_size=args.batch_size)
 
-            # this changes the 'my_attention_masks' input to highlight which words should be changed
-            fake_inputs = attentionM(**inputs)
-            # logger.info('Attention success!')
+            minibatch_iterator = tqdm(minibatch_dataloader, desc="Minibatch, minibatch size {}".format(args.batch_size))
 
-            # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
-            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
-            fake_inputs = generatorM(**fake_inputs)
-            # logger.info('Generator success!')
+            minibatch_error_classifier_d = 0
+            minibatch_error_generator_d = 0
 
-            # flip labels to represent the wrong answers are actually right
-            fake_inputs = flip_labels(**fake_inputs)
+            for minibatch_iterate, minibatch in enumerate(minibatch_iterator):
 
-            # get the predictions of which answers are the correct pairing from the classifier
-            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
-            predictions, errorG = classifierM(**fake_inputs)
-            # logger.info('Generator classification success')
 
-            print('Generator (discriminator) scores are \n{}\n'.format(predictions[1].detach()))
-            logger.info('The generator (discriminator) error is {}'.format(round(errorG[1].detach().item(), 3)))
-            print('The generator (discriminator) error is {}'.format(round(errorG[1].detach().item(), 3)))
+                # TODOfixed should I be splitting it up so that the Generator and Classifier get different input?
+                # I don't think so because the classifier is making a judgement on the data but not training in first pass, so should still give it a chance to see it in the second
+                # also don't have enough data values to afford not to pass them
+                minibatch = tuple(t.to(args.device) for t in minibatch)
+                inputs = {'input_ids': minibatch[0],
+                          'attention_mask': minibatch[1],
+                          'token_type_ids': minibatch[2],
+                          'my_attention_mask': minibatch[3],
+                          'classification_labels': minibatch[4],
+                          'discriminator_labels': minibatch[5],
+                          'sentences_type': minibatch[6],
+                          }
 
-            if all(errorG) is None:
-                logger.warning('ErrorG is None!')
-                raise Exception('ErrorG is None!')
+                # Train generator
+                generatorM.train()
+                attentionM.eval()
+                # Train classifier
+                classifierM.train()
 
-            # based on the loss function update the parameters within the generator/ attention model
+                # this changes the 'my_attention_masks' input to highlight which words should be changed
+                fake_inputs = attentionM(**inputs)
+                # logger.info('Attention success!')
 
-            #errorG[0] is classification error, errorG[1] is discriminator error
-            # if errorG[0] is not None:
-            #     errorG[0].backward(retain_graph=True)
+                # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
+                fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+                fake_inputs = generatorM(**fake_inputs)
+                # logger.info('Generator success!')
 
-            errorG[1].backward()
+                # flip labels to represent the wrong answers are actually right
+                fake_inputs = flip_labels(**fake_inputs)
 
-            # print('generator model')
-            # for i in range(len(list(generatorM.parameters()))):
-            #     print(i)
-            #     print(list(generatorM.parameters())[i].grad)
-            #     print(torch.max(list(generatorM.parameters())[i].grad))
-            # print('classifier model')
-            # for i in range(len(list(classifierM.parameters()))):
-            #     print(i)
-            #     print(list(classifierM.parameters())[i].grad)
-            # print(torch.max(list(classifierM.parameters())[0].grad))
-            # print('*****************************************************************')
+                # get the predictions of which answers are the correct pairing from the classifier
+                fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+                predictions, (errorG_c, errorG_d) = classifierM(**fake_inputs)
+                # logger.info('Generator classification success')
 
-            if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
-                raise Exception(
-                    'There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(
-                        epoch, iterate))
-            if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in
-                    range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
-                logger.warning(
-                    'There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch,
-                                                                                                                iterate))
-                # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+                if all((errorG_c, errorG_d)) is None:
+                    logger.warning('ErrorG is None!')
+                    raise Exception('ErrorG is None!')
 
-            # Update generatorM parameters
-            generatorO.step()
-            # logger.info('Generator step success!')
+                # based on the loss function update the parameters within the generator/ attention model
 
-            # zero out gradient of networks
-            generatorM.zero_grad()
-            classifierM.zero_grad()
+                #errorG_c is classification error, errorG_d is discriminator error
+                # if errorG_c is not None:
+                #     errorG_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
+                #     errorG_c.backward(retain_graph=True)
 
-            # detach the inputs so the gradient graphs don't reach back, only need them for classifier
-            fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
+                errorG_d /= len(batch[6])
+                errorG_d.backward()
 
-            # see if the classifier can determine difference between fake and real data
-            predictions_fake, error_fake = classifierM(**fake_inputs)
-            predictions_real, error_real = classifierM(**inputs)
-            # logger.info('Classifier fake and real data success!')
+                minibatch_error_generator_d += errorG_d.detach().item()
 
-            if all(error_fake) is None:
-                logger.warning('Error_fake is None!')
-                raise Exception('Error_fake is None!')
-            if all(error_real) is None:
-                logger.warning('Error_real is None!')
-                raise Exception('Error_real is None!')
+                # print('generator model')
+                # for i in range(len(list(generatorM.parameters()))):
+                #     print(i)
+                #     print(list(generatorM.parameters())[i].grad)
+                #     print(torch.max(list(generatorM.parameters())[i].grad))
+                # print('classifier model')
+                # for i in range(len(list(classifierM.parameters()))):
+                #     print(i)
+                #     print(list(classifierM.parameters())[i].grad)
+                # print(torch.max(list(classifierM.parameters())[0].grad))
+                # print('*****************************************************************')
 
-            # calculate gradients from each loss functions
-            # error_fake[0] is classification error, error_fake[1] is discriminator error
-            # no_classifier_error = True
-            # if error_fake[0] is not None:
-            #     error_fake[0].backward(retain_graph=True)
-            #     no_classifier_error = False
+                if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
+                    raise Exception(
+                        'There is no gradient parameters for the generator (all None) in epoch {} iteration {} minibatch {}!'.format(
+                            epoch, batch_iterate, minibatch_iterate))
+                if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in
+                        range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
+                    logger.warning(
+                        'There is some zero gradient parameters for the generator in epoch {} iteration {} minibatch {}!'.format(epoch,
+                                                                                                                    batch_iterate, minibatch_iterate))
+                    # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 
-            error_fake[1].backward()
+                # detach the inputs so the gradient graphs don't reach back, only need them for classifier
+                fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
 
-            # error_real[0] is classification error, error_real[1] is discriminator error
-            # if error_real[0] is not None:
-            #     error_real[0].backward(retain_graph=True)
-            #     no_classifier_error = False
+                # see if the classifier can determine difference between fake and real data
+                # predictions_fake, error_fake = classifierM(**fake_inputs)
+                predictions_real, (error_real_c, error_real_d) = classifierM(**inputs)
+                # logger.info('Classifier fake and real data success!')
 
-            error_real[1].backward()
+                # if all(error_fake) is None:
+                #     logger.warning('Error_fake is None!')
+                #     raise Exception('Error_fake is None!')
+                if all((error_real_c, error_real_d)) is None:
+                    logger.warning('Error_real is None!')
+                    raise Exception('Error_real is None!')
 
-            # print('generator model')
-            # for i in range(len(list(generatorM.parameters()))):
-            #     print(i)
-            #     print(list(generatorM.parameters())[i].grad)
-            # print(torch.max(list(generatorM.parameters())[i].grad))
-            # print('classifier model')
-            # for i in range(len(list(classifierM.parameters()))):
-            #     print(list(classifierM.parameters())[i].grad)
-                # print(torch.max(list(classifierM.parameters())[i].grad))
-            # print('*****************************************************************')
+                # calculate gradients from each loss functions
+                # error_fake[0] is classification error, error_fake[1] is discriminator error
+                # no_classifier_error = True
+                # if error_fake[0] is not None:
+                #     error_fake[0] /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
+                #     error_fake[0].backward(retain_graph=True)
+                #     no_classifier_error = False
 
-            if all([list(classifierM.parameters())[i].grad is None for i in
-                    range(len(list(classifierM.parameters())))]):
-                raise Exception(
-                    'There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(
-                        epoch, iterate))
-            if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in
-                    range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
-                logger.warning(
-                    'There are some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch,
-                                                                                                                  iterate))
-                # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
+                # error_fake[1] /= len(batch[6])
+                # error_fake[1].backward()
+
+                # error_real[0] is classification error, error_real[1] is discriminator error
+                # if error_real_c is not None:
+                #     error_real_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
+                #     error_real_c.backward(retain_graph=True)
+                #     no_classifier_error = False
+
+                error_real_d /= len(batch[6])
+                error_real_d.backward()
+
+                minibatch_error_classifier_d += error_real_d.detach().item()
+
+                # print('generator model')
+                # for i in range(len(list(generatorM.parameters()))):
+                #     print(i)
+                #     print(list(generatorM.parameters())[i].grad)
+                # print(torch.max(list(generatorM.parameters())[i].grad))
+                # print('classifier model')
+                # for i in range(len(list(classifierM.parameters()))):
+                #     print(list(classifierM.parameters())[i].grad)
+                    # print(torch.max(list(classifierM.parameters())[i].grad))
+                # print('*****************************************************************')
+
+                if all([list(classifierM.parameters())[i].grad is None for i in
+                        range(len(list(classifierM.parameters())))]):
+                    raise Exception(
+                        'There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(
+                            epoch, batch_iterate))
+                if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in
+                        range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
+                    logger.warning(
+                        'There are some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch,
+                                                                                                                      batch_iterate))
+                    # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
+
+                # add errors together for logging purposes
+                # errorC = error_real[0] + error_fake[0] if not no_classifier_error else -1.
+                errorD = error_real_d + errorG_d
+
+                # log error for this step
+                # logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item() if not no_classifier_error else -1., 3)))
+
+            minibatch_iterator.close()
 
             # TODO before stepping should figure out a way to keep adding up until large batch size is achieved
 
+            # logger.info('The batch generator (discriminator) error is {}'.format(round(minibatch_error_generator_d, 3)))
+            # print('The batch generator (discriminator) error is {}'.format(round(minibatch_error_generator_d, 3)))
+
+            logger.info('The batch classifier (discriminator) real error is {} and fake error is {} for a sum of {}'.format(
+                round(minibatch_error_classifier_d, 3),
+                round(minibatch_error_generator_d, 3),
+                round(sum([minibatch_error_classifier_d, minibatch_error_generator_d]), 3)))
+            print('The batch classifier (discriminator) real error is {} and fake error is {} for a sum of {}'.format(
+                round(minibatch_error_classifier_d, 3),
+                round(minibatch_error_generator_d, 3),
+                round(sum([minibatch_error_classifier_d, minibatch_error_generator_d]), 3)))
+
+            # Update generatorM parameters
+            generatorO.step()
+
             # update classifier parameters
             classifierO.step()
-            # logger.info('Classifier step success!')
 
             # zero out gradient of networks
             generatorM.zero_grad()
             classifierM.zero_grad()
-
-            # add errors together for logging purposes
-            # errorC = error_real[0] + error_fake[0] if not no_classifier_error else -1.
-            errorD = error_real[1] + error_fake[1]
-
-            # log error for this step
-            # logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item() if not no_classifier_error else -1., 3)))
-            print('Classifier (discriminator) scores are \n{}\n'.format(predictions_real[1].detach()))
-            logger.info('The classifier (discriminator) error is {}'.format(round(errorD.detach().item(), 3)))
-            print('The classifier (discriminator) real error is {} and fake error is {} for a sum of {}'.format(round(error_real[1].detach().item(), 3),
-                                                                                                                round(error_fake[1].detach().item(), 3),
-                                                                                                                round(errorD.detach().item(), 3)))
 
             # logging for fake and real classification success
             # predictions_real_classification = torch.argmax(predictions_real[0], dim=1)
             # predictions_fake_classification = torch.argmin(predictions_fake[0], dim=1)
 
-            num_training_seen += inputs['input_ids'].shape[0]
+            # num_training_seen += inputs['input_ids'].shape[0]
 
             # num_training_correct_real_classifier += int(sum(
             #     [inputs['classification_labels'][i, p].item() for i, p in zip(range(inputs['classification_labels'].shape[0]), predictions_real_classification)]))
@@ -486,6 +509,8 @@ def main():
                             help='Name of attention model to use')
         parser.add_argument('--batch_size', type=int, default=5,
                             help='Size of each batch to be used in training')
+        parser.add_argument('--minibatch_size', type=int, default=10,
+                            help='Number of minibatches to do before stepping')
         parser.add_argument('--max_length', type=int, default=128,
                             help='The maximum length of the sequences allowed. This will induce cutting off or padding')
         parser.add_argument('--evaluate_during_training', action='store_true',
@@ -582,6 +607,7 @@ def main():
                 self.evaluate_all_models = True
                 self.do_ablation = True
                 self.domain_words = ['moon', 'earth']
+                self.minibatch_size = 4
 
         args = Args()
 

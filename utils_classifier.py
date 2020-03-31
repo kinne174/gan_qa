@@ -105,17 +105,17 @@ class ClassifierNet(torch.nn.Module):
         xc = xc.view(-1, self.num_choices)
         xc = F.softmax(xc, dim=1)
 
-        xd = xd.view(-1, self.num_choices)
+        # xd = xd.view(-1, self.num_choices)
         # xd = F.softmax(xd, dim=1)
 
         scores = (xc, xd)
 
         if discriminator_labels is not None:
 
-            assert xd.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(xd.shape,
-                                                                                                                                  discriminator_labels.shape)
+            # assert xd.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(xd.shape,
+            #                                                                                                                       discriminator_labels.shape)
 
-            discriminator_loss = self.BCEWithLogitsLoss_reduc(xd, discriminator_labels)
+            discriminator_loss = self.BCEWithLogitsLoss_reduc(xd, discriminator_labels.view(*xd.shape))
 
             if classification_labels is not None and not torch.all(torch.eq(torch.zeros_like(sentences_type), sentences_type)):
 
@@ -217,7 +217,7 @@ class MyAlbertForMultipleChoice(nn.Module):
         self.discriminator = nn.Linear(self.albert.config.hidden_size, 1)
 
         self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
-        self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
+        self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='sum')
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
@@ -271,7 +271,7 @@ class MyAlbertForMultipleChoice(nn.Module):
                 assert classification_loss_noreduc.shape == sentences_type_multiplier.shape, 'classification loss shape ({}) is not the same as sentences_type shape ({})'.format(classification_loss_noreduc.shape,
                                                                                                                                                               sentences_type.shape)
 
-                classification_loss = torch.sum(classification_loss_noreduc*sentences_type_multiplier)/(torch.sum(sentences_type) * 4)
+                classification_loss = torch.sum(classification_loss_noreduc*sentences_type_multiplier)
 
             else:
                 classification_loss = None
