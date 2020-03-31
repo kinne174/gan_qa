@@ -238,14 +238,17 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # calculate gradients from each loss functions
             # error_fake[0] is classification error, error_fake[1] is discriminator error
+            no_classifier_error = True
             if error_fake[0] is not None:
                 error_fake[0].backward(retain_graph=True)
+                no_classifier_error = False
 
             error_fake[1].backward()
 
             # error_real[0] is classification error, error_real[1] is discriminator error
             if error_real[0] is not None:
                 error_real[0].backward(retain_graph=True)
+                no_classifier_error = False
 
             error_real[1].backward()
 
@@ -285,7 +288,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             classifierM.zero_grad()
 
             # add errors together for logging purposes
-            errorC = error_real[0] + error_fake[0] if error_real is not None else -1.
+            errorC = error_real[0] + error_fake[0] if not no_classifier_error else -1.
             errorD = error_real[1] + error_fake[1]
 
             # log error for this step
