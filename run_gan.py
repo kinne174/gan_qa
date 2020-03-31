@@ -159,12 +159,12 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # this changes the 'my_attention_masks' input to highlight which words should be changed
             fake_inputs = attentionM(**inputs)
-            logger.info('Attention success!')
+            # logger.info('Attention success!')
 
             # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
             fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
             fake_inputs = generatorM(**fake_inputs)
-            logger.info('Generator success!')
+            # logger.info('Generator success!')
 
             # flip labels to represent the wrong answers are actually right
             fake_inputs = flip_labels(**fake_inputs)
@@ -172,7 +172,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # get the predictions of which answers are the correct pairing from the classifier
             fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
             predictions, errorG = classifierM(**fake_inputs)
-            logger.info('Generator classification success')
+            # logger.info('Generator classification success')
+
+            print('Generator (discriminator) scores are \n{}\n'.format(predictions[1].detach()))
+            logger.info('The generator (discriminator) error is {}'.format(round(errorG[1].detach().item(), 3)))
+            print('The generator (discriminator) error is {}'.format(round(errorG[1].detach().item(), 3)))
 
             if all(errorG) is None:
                 logger.warning('ErrorG is None!')
@@ -181,14 +185,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # based on the loss function update the parameters within the generator/ attention model
 
             #errorG[0] is classification error, errorG[1] is discriminator error
-            if errorG[0] is not None:
-                errorG[0].backward(retain_graph=True)
+            # if errorG[0] is not None:
+            #     errorG[0].backward(retain_graph=True)
 
             errorG[1].backward()
 
-            # print('attention model')
-            # print(list(attentionM.parameters())[0].grad)
-            # print(torch.max(list(attentionM.parameters())[0].grad))
             # print('generator model')
             # for i in range(len(list(generatorM.parameters()))):
             #     print(i)
@@ -200,6 +201,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             #     print(list(classifierM.parameters())[i].grad)
             # print(torch.max(list(classifierM.parameters())[0].grad))
             # print('*****************************************************************')
+
             if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
                 raise Exception(
                     'There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(
@@ -213,12 +215,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # Update generatorM parameters
             generatorO.step()
-            # attentionO.step()
-            logger.info('Generator step success!')
+            # logger.info('Generator step success!')
 
             # zero out gradient of networks
             generatorM.zero_grad()
-            # attentionM.zero_grad()
             classifierM.zero_grad()
 
             # detach the inputs so the gradient graphs don't reach back, only need them for classifier
@@ -227,7 +227,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # see if the classifier can determine difference between fake and real data
             predictions_fake, error_fake = classifierM(**fake_inputs)
             predictions_real, error_real = classifierM(**inputs)
-            logger.info('Classifier fake and real data success!')
+            # logger.info('Classifier fake and real data success!')
 
             if all(error_fake) is None:
                 logger.warning('Error_fake is None!')
@@ -238,23 +238,20 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # calculate gradients from each loss functions
             # error_fake[0] is classification error, error_fake[1] is discriminator error
-            no_classifier_error = True
-            if error_fake[0] is not None:
-                error_fake[0].backward(retain_graph=True)
-                no_classifier_error = False
+            # no_classifier_error = True
+            # if error_fake[0] is not None:
+            #     error_fake[0].backward(retain_graph=True)
+            #     no_classifier_error = False
 
             error_fake[1].backward()
 
             # error_real[0] is classification error, error_real[1] is discriminator error
-            if error_real[0] is not None:
-                error_real[0].backward(retain_graph=True)
-                no_classifier_error = False
+            # if error_real[0] is not None:
+            #     error_real[0].backward(retain_graph=True)
+            #     no_classifier_error = False
 
             error_real[1].backward()
 
-            # print('attention model')
-            # print(list(attentionM.parameters())[0].grad)
-            # print(torch.max(list(attentionM.parameters())[0].grad))
             # print('generator model')
             # for i in range(len(list(generatorM.parameters()))):
             #     print(i)
@@ -263,8 +260,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # print('classifier model')
             # for i in range(len(list(classifierM.parameters()))):
             #     print(list(classifierM.parameters())[i].grad)
-            #     print(torch.max(list(classifierM.parameters())[i].grad))
+                # print(torch.max(list(classifierM.parameters())[i].grad))
             # print('*****************************************************************')
+
             if all([list(classifierM.parameters())[i].grad is None for i in
                     range(len(list(classifierM.parameters())))]):
                 raise Exception(
@@ -281,20 +279,23 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # update classifier parameters
             classifierO.step()
-            logger.info('Classifier step success!')
+            # logger.info('Classifier step success!')
 
             # zero out gradient of networks
             generatorM.zero_grad()
             classifierM.zero_grad()
 
             # add errors together for logging purposes
-            errorC = error_real[0] + error_fake[0] if not no_classifier_error else -1.
+            # errorC = error_real[0] + error_fake[0] if not no_classifier_error else -1.
             errorD = error_real[1] + error_fake[1]
 
             # log error for this step
-            # logger.info('The generator error is {}'.format(round(errorG.detach().item(), 3)))
-            logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item() if not no_classifier_error else -1., 3)))
+            # logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item() if not no_classifier_error else -1., 3)))
+            print('Classifier (discriminator) scores are \n{}\n'.format(predictions_real[1].detach()))
             logger.info('The classifier (discriminator) error is {}'.format(round(errorD.detach().item(), 3)))
+            print('The classifier (discriminator) real error is {} and fake error is {} for a sum of {}'.format(round(error_real[1].detach().item(), 3),
+                                                                                                                round(error_fake[1].detach().item(), 3),
+                                                                                                                round(errorD.detach().item(), 3)))
 
             # logging for fake and real classification success
             # predictions_real_classification = torch.argmax(predictions_real[0], dim=1)
@@ -485,7 +486,7 @@ def main():
                             help='Name of attention model to use')
         parser.add_argument('--batch_size', type=int, default=5,
                             help='Size of each batch to be used in training')
-        parser.add_argument('--max_length', type=int, default=512,
+        parser.add_argument('--max_length', type=int, default=128,
                             help='The maximum length of the sequences allowed. This will induce cutting off or padding')
         parser.add_argument('--evaluate_during_training', action='store_true',
                             help='After each epoch test model on evaluation set')
@@ -569,10 +570,10 @@ def main():
                 self.overwrite_cache_dir = False
                 self.clear_output_dir = False
                 self.seed = 1234
-                self.max_length = 512
+                self.max_length = 128
                 self.batch_size = 2
                 self.do_lower_case = True
-                self.save_steps = 2
+                self.save_steps = 200
                 self.attention_window_size = 10
                 self.max_attention_words = 3
                 self.essential_terms_hidden_dim = 100

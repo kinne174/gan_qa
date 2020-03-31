@@ -84,16 +84,20 @@ class ClassifierNet(torch.nn.Module):
             assert inputs_embeds.is_sparse
 
             temp_input_ids = torch.sparse.mm(inputs_embeds, embedding_mat)
-            temp_input_ids = temp_input_ids.view(input_ids.shape[0]*4, input_ids.shape[-1], -1)
+            temp_input_ids = temp_input_ids.view(input_ids.shape[0] * 4, input_ids.shape[-1], -1)
         else:
             temp_input_ids = self.embedding(input_ids.view(-1, input_ids.shape[-1]))
 
+        sum_attentions = torch.sum(attention_mask.view(-1, attention_mask.shape[-1]), dim=1) - 1
+        x = torch.empty((input_ids.shape[0] * 4, self.hidden_dim))
 
-
-        # TODO do a while loop here on attention mask and break once it equals zero
         gru_out, last_hidden = self.gru(temp_input_ids)
 
-        x = last_hidden[-1, :, :].squeeze()
+        assert sum_attentions.shape[0] == x.shape[0], 'Sum_attentions shape is ({}) not equal to x shape ({})'.format(sum_attentions.shape[0], x.shape[0])
+        for sa_ind, sa in enumerate(sum_attentions):
+            x[sa_ind, :] = gru_out[sa_ind, sa, :].squeeze()
+
+        # x = last_hidden[-1, :, :].squeeze()
 
         xc = self.out_classification(x)
         xd = self.out_discriminator(x)
@@ -102,7 +106,7 @@ class ClassifierNet(torch.nn.Module):
         xc = F.softmax(xc, dim=1)
 
         xd = xd.view(-1, self.num_choices)
-        xd = F.softmax(xd, dim=1)
+        # xd = F.softmax(xd, dim=1)
 
         scores = (xc, xd)
 

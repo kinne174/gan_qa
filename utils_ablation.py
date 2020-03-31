@@ -67,7 +67,11 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
             answer_words = tokenizer.convert_ids_to_tokens(answer_ids)
             all_answer_words.append(answer_words)
 
-            pad_index = inputs['attention_mask'][i, j, :].tolist().index(0)
+            attention_list = inputs['attention_mask'][i, j, :].tolist()
+            if 0 in attention_list:
+                pad_index = attention_list.index(0)
+            else:
+                pad_index = len(attention_list) - 1
 
             real_ids = inputs['input_ids'][i, j, seq_end_index:pad_index]
             fake_ids = fake_inputs['input_ids'][i, j, seq_end_index:pad_index]
