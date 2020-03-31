@@ -89,7 +89,7 @@ class ClassifierNet(torch.nn.Module):
             temp_input_ids = self.embedding(input_ids.view(-1, input_ids.shape[-1]))
 
         sum_attentions = torch.sum(attention_mask.view(-1, attention_mask.shape[-1]), dim=1) - 1
-        x = torch.empty((input_ids.shape[0] * 4, self.hidden_dim))
+        x = torch.empty((input_ids.shape[0] * 4, self.hidden_dim)).to(device)
 
         gru_out, last_hidden = self.gru(temp_input_ids)
 
