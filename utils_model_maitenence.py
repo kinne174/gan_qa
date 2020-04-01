@@ -76,7 +76,8 @@ def inititalize_models(args, tokenizer):
                               'albert': {'pretrained_model_name_or_path': args.generator_model_name,
                                        'config': generator_config},
                               }
-    classifier_model_dicts = {'linear':{'config': classifier_config},
+    classifier_model_dicts = {'linear':{'pretrained_model_name_or_path': args.classifier_model_name,
+                                        'config': classifier_config},
                               'bert': {'pretrained_model_name_or_path': args.classifier_model_name,
                                        'config': classifier_config},
                               'roberta': {'pretrained_model_name_or_path': args.classifier_model_name,

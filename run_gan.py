@@ -149,8 +149,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             minibatch_error_classifier_d = 0
             minibatch_error_generator_d = 0
 
-            for minibatch_iterate, minibatch in enumerate(minibatch_iterator):
+            minibatch_error_classifier_c = 0
+            minibatch_error_generator_c = 0
 
+            for minibatch_iterate, minibatch in enumerate(minibatch_iterator):
 
                 # TODOfixed should I be splitting it up so that the Generator and Classifier get different input?
                 # I don't think so because the classifier is making a judgement on the data but not training in first pass, so should still give it a chance to see it in the second
@@ -173,12 +175,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 # this changes the 'my_attention_masks' input to highlight which words should be changed
                 fake_inputs = attentionM(**inputs)
-                # logger.info('Attention success!')
 
                 # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
                 fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
                 fake_inputs = generatorM(**fake_inputs)
-                # logger.info('Generator success!')
 
                 # flip labels to represent the wrong answers are actually right
                 fake_inputs = flip_labels(**fake_inputs)
@@ -186,7 +186,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # get the predictions of which answers are the correct pairing from the classifier
                 fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
                 predictions, (errorG_c, errorG_d) = classifierM(**fake_inputs)
-                # logger.info('Generator classification success')
 
                 if all((errorG_c, errorG_d)) is None:
                     logger.warning('ErrorG is None!')
@@ -195,9 +194,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # based on the loss function update the parameters within the generator/ attention model
 
                 #errorG_c is classification error, errorG_d is discriminator error
-                # if errorG_c is not None:
-                #     errorG_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
-                #     errorG_c.backward(retain_graph=True)
+                if errorG_c is not None:
+                    errorG_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
+                    errorG_c.backward(retain_graph=True)
+
+                    minibatch_error_generator_c += errorG_c.detach().item()
 
                 errorG_d /= args.minibatch_size
                 errorG_d.backward()
@@ -231,33 +232,19 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
 
                 # see if the classifier can determine difference between fake and real data
-                # predictions_fake, error_fake = classifierM(**fake_inputs)
                 predictions_real, (error_real_c, error_real_d) = classifierM(**inputs)
-                # logger.info('Classifier fake and real data success!')
 
-                # if all(error_fake) is None:
-                #     logger.warning('Error_fake is None!')
-                #     raise Exception('Error_fake is None!')
                 if all((error_real_c, error_real_d)) is None:
                     logger.warning('Error_real is None!')
                     raise Exception('Error_real is None!')
 
-                # calculate gradients from each loss functions
-                # error_fake[0] is classification error, error_fake[1] is discriminator error
-                # no_classifier_error = True
-                # if error_fake[0] is not None:
-                #     error_fake[0] /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
-                #     error_fake[0].backward(retain_graph=True)
-                #     no_classifier_error = False
 
-                # error_fake[1] /= len(batch[6])
-                # error_fake[1].backward()
+                # error_real_c is classification error, error_real_d is discriminator error
+                if error_real_c is not None:
+                    error_real_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
+                    error_real_c.backward(retain_graph=True)
 
-                # error_real[0] is classification error, error_real[1] is discriminator error
-                # if error_real_c is not None:
-                #     error_real_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
-                #     error_real_c.backward(retain_graph=True)
-                #     no_classifier_error = False
+                    minibatch_error_classifier_c += error_real_c.detach().item()
 
                 error_real_d /= args.minibatch_size
                 error_real_d.backward()
@@ -296,19 +283,28 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             minibatch_iterator.close()
 
-            # TODO before stepping should figure out a way to keep adding up until large batch size is achieved
-
             # logger.info('The batch generator (discriminator) error is {}'.format(round(minibatch_error_generator_d, 3)))
             # print('The batch generator (discriminator) error is {}'.format(round(minibatch_error_generator_d, 3)))
 
             logger.info('The batch classifier (discriminator) real error is {} and fake error is {} for a sum of {}'.format(
                 round(minibatch_error_classifier_d, 3),
                 round(minibatch_error_generator_d, 3),
-                round(sum([minibatch_error_classifier_d, minibatch_error_generator_d]), 3)))
+                round(sum([minibatch_error_classifier_d, minibatch_error_generator_d]), 4)))
             print('The batch classifier (discriminator) real error is {} and fake error is {} for a sum of {}'.format(
                 round(minibatch_error_classifier_d, 3),
                 round(minibatch_error_generator_d, 3),
-                round(sum([minibatch_error_classifier_d, minibatch_error_generator_d]), 3)))
+                round(sum([minibatch_error_classifier_d, minibatch_error_generator_d]), 4)))
+
+            logger.info('The batch classifier (classification) real error is {} and fake error is {} for a sum of {}'.format(
+                round(minibatch_error_classifier_c, 3),
+                round(minibatch_error_generator_c, 3),
+                round(sum([minibatch_error_classifier_c, minibatch_error_generator_c]), 4)
+            ))
+            print('The batch classifier (classification) real error is {} and fake error is {} for a sum of {}'.format(
+                round(minibatch_error_classifier_c, 3),
+                round(minibatch_error_generator_c, 3),
+                round(sum([minibatch_error_classifier_c, minibatch_error_generator_c]), 4)
+            ))
 
             # Update generatorM parameters
             generatorO.step()
@@ -711,7 +707,6 @@ def main():
 if __name__ == '__main__':
     main()
 
-# TODO try a smaller classifier and larger generator model
 # TODO train generator first, can lightly train with classifier, majority should be generation though, possibly later can focus on cloze but for now just get generator resutls thta can be written up
 # max length 512 batch size 2
 # max length 256 batch size 5
