@@ -129,6 +129,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
     logger.info('Starting to train!')
     logger.info('There are {} examples.'.format(len(dataset)))
+    logger.info('There will be {} iterations.'.format(len(dataset)//(args.batch_size*args.minibatch_size) + 1))
+
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size*args.minibatch_size))
 
@@ -658,7 +660,7 @@ def main():
     args.cache_dir = proposed_cache_dir
 
     for arg, value in sorted(vars(args).items()):
-        logging.info("Argument {}: {}".format(arg, value))
+        logger.info("Argument {}: {}".format(arg, value))
 
     # Set seed
     set_seed(args)
