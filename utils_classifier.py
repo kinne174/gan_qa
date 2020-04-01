@@ -78,8 +78,11 @@ class ClassifierNet(torch.nn.Module):
 
             if os.path.exists(pretrained_model_name_or_path):
                 logger.info('Checkpoint found! Loading pretrained model.')
+
                 model_to_return = cls(kwargs['config'])
-                model_to_return.load_state_dict(torch.load(pretrained_model_name_or_path))
+                model_load_filename = os.path.join(pretrained_model_name_or_path, 'linear_weights.pt')
+                model_to_return.load_state_dict(torch.load(model_load_filename))
+
                 return model_to_return
 
             else:
