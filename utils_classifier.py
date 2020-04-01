@@ -71,10 +71,19 @@ class ClassifierNet(torch.nn.Module):
 
     @classmethod
     def from_pretrained(cls, **kwargs):
-        if os.path.exists(kwargs['pretrained_model_name_or_path']):
-            model_to_return = cls(kwargs['config'])
-            model_to_return.load_state_dict(torch.load(kwargs['pretrained_model_name_or_path']))
-            return model_to_return
+        pretrained_model_name_or_path = kwargs['pretrained_model_name_or_path']
+
+        if pretrained_model_name_or_path is not None:
+            logger.info('Attempting to load model from checkpoint {}'.format(pretrained_model_name_or_path))
+
+            if os.path.exists(pretrained_model_name_or_path):
+                logger.info('Checkpoint found! Loading pretrained model.')
+                model_to_return = cls(kwargs['config'])
+                model_to_return.load_state_dict(torch.load(pretrained_model_name_or_path))
+                return model_to_return
+
+            else:
+                logger.info('Unable to load model. Returning new model.')
 
         return cls(kwargs['config'])
 
