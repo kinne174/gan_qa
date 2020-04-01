@@ -91,20 +91,25 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
                                                                                                                                                                                           len(my_attention_mask))
 
             att_counter = 1
+            new_fake_words = []
+            new_real_words = []
             for k, att in enumerate(my_attention_mask):
                 if att == 1:
-                    fake_words = fake_words[:k] + ['*{}'.format(att_counter)] + [fake_words[k]] + ['*{}'.format(att_counter)] + fake_words[k+1:]
-                    real_words = real_words[:k] + ['*{}'.format(att_counter)] + [real_words[k]] + ['*{}'.format(att_counter)] + real_words[k+1:]
+                    new_fake_words.extend(['*{}'.format(att_counter)] + [fake_words[k]] + ['*{}'.format(att_counter)])
+                    new_real_words.extend(['*{}'.format(att_counter)] + [real_words[k]] + ['*{}'.format(att_counter)])
 
                     att_counter += 1
+                else:
+                    new_fake_words.append(fake_words[k])
+                    new_real_words.append(real_words[k])
 
-            all_fake_words.append(fake_words)
-            all_real_words.append(real_words)
+            all_fake_words.append(new_fake_words)
+            all_real_words.append(new_real_words)
 
         current_real_label = inputs['classification_labels'][i, :]
         current_fake_label = fake_inputs['classification_labels'][i, :]
         correct_real_label = [' ' if lab == 0 else '*r' for lab in current_real_label]
-        correct_fake_label = [' ' if lab == 0 else '*f' for lab in current_fake_label]
+        correct_fake_label = [' ' if lab == 1 else '*f' for lab in current_fake_label]
 
         current_real_prediction = torch.argmax(real_predictions[i, :])
         current_fake_prediction = torch.argmin(fake_predictions[i, :])
@@ -121,8 +126,8 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
         answer_features = list(map(tuple, zip(all_real_words, all_fake_words, real_predicted_label, correct_real_label, fake_predicted_label, correct_fake_label, real_softmaxed_scores, fake_softmaxed_scores, all_answer_words, answer_letters)))
 
         with open(ablation_filename, write_append_trigger) as af:
-            af.write('Predicted real answer: #r. Correct real answer: *r.')
-            af.write('Predicted fake wrong answer: #f. Coreect fake wrong answer: *f.')
+            af.write('Predicted real answer: #r. Correct real answer: *r.\n')
+            af.write('Predicted fake wrong answer: #f. Coreect fake wrong answer: *f.\n\n')
 
             question_words = translate_tokens(question_words)
             af.write('** {}\n'.format(' '.join(question_words)))
@@ -134,8 +139,8 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
                 rw = translate_tokens(rw)
                 fw = translate_tokens(fw)
 
-                af.write('Real context: {}\n\n'.format(rw))
-                af.write('Fake context: {}\n\n'.format(fw))
+                af.write('Real context: {}\n\n'.format(' '.join(rw)))
+                af.write('Fake context: {}\n\n'.format(' '.join(fw)))
 
             af.write('\n')
 
