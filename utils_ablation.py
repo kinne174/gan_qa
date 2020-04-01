@@ -1,10 +1,13 @@
 import torch
+import torch.nn as nn
 import logging
 import os
 from string import punctuation
 
 # logging
 logger = logging.getLogger(__name__)
+
+sigmoid = nn.Sigmoid()
 
 
 def translate_tokens(tokens):
@@ -59,7 +62,8 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
         question_words = tokenizer.convert_ids_to_tokens(question_ids)
 
         all_answer_words = []
-        all_changed_words = []
+        all_real_words = []
+        all_fake_words = []
         for j in range(4):
             seq_end_index = inputs['token_type_ids'][i, j, :].tolist().index(1)
 
@@ -79,22 +83,23 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
             fake_words = tokenizer.convert_ids_to_tokens(fake_ids)
 
-            window_size = 4
+            # window_size = 4
             my_attention_mask = fake_inputs['my_attention_mask'][i, j, seq_end_index:pad_index].tolist()
 
             assert len(real_words) == len(fake_words) == len(my_attention_mask), 'Len of real_words ({}), len of fake_words ({}) and len of my_attention_mask ({}) does not match'.format(len(real_words),
                                                                                                                                                                                           len(fake_words),
                                                                                                                                                                                           len(my_attention_mask))
 
-            changed_words = []
-
+            att_counter = 1
             for k, att in enumerate(my_attention_mask):
                 if att == 1:
-                    windowed_fake_words = fake_words[max(0, k-window_size):k] + ['*'] + [fake_words[k]] + ['*'] + fake_words[k+1:min(k+window_size, len(fake_words))]
-                    windowed_real_words = real_words[max(0, k-window_size):k] + ['*'] + [real_words[k]] + ['*'] + real_words[k+1:min(k+window_size, len(real_words))]
+                    fake_words = fake_words[:k] + ['*{}'.format(att_counter)] + [fake_words[k]] + ['*{}'.format(att_counter)] + fake_words[k+1:]
+                    real_words = real_words[:k] + ['*{}'.format(att_counter)] + [real_words[k]] + ['*{}'.format(att_counter)] + real_words[k+1:]
 
-                    changed_words.append((windowed_fake_words, windowed_real_words))
-            all_changed_words.append(changed_words)
+                    att_counter += 1
+
+            all_fake_words.append(fake_words)
+            all_real_words.append(real_words)
 
         current_real_label = inputs['classification_labels'][i, :]
         current_fake_label = fake_inputs['classification_labels'][i, :]
@@ -109,25 +114,29 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
         fake_predicted_label = [' ']*4
         fake_predicted_label[current_fake_prediction.item()] = '#f'
 
-        real_softmaxed_scores = [round(ss, 3) for ss in real_predictions[i, :].squeeze().tolist()]
-        fake_softmaxed_scores = [round(ss, 3) for ss in fake_predictions[i, :].squeeze().tolist()]
+        real_softmaxed_scores = [round(ss, 3) for ss in sigmoid(real_predictions[i, :]).squeeze().tolist()]
+        fake_softmaxed_scores = [round(ss, 3) for ss in sigmoid(fake_predictions[i, :]).squeeze().tolist()]
 
-        assert len(all_changed_words) == len(real_predicted_label) == len(correct_real_label) == len(fake_predicted_label) == len(correct_fake_label) == len(real_softmaxed_scores) == len(fake_softmaxed_scores) == len(all_answer_words) == len(answer_letters)
-        answer_features = list(map(tuple, zip(all_changed_words, real_predicted_label, correct_real_label, fake_predicted_label, correct_fake_label, real_softmaxed_scores, fake_softmaxed_scores, all_answer_words, answer_letters)))
+        assert len(all_real_words) == len(all_fake_words) == len(real_predicted_label) == len(correct_real_label) == len(fake_predicted_label) == len(correct_fake_label) == len(real_softmaxed_scores) == len(fake_softmaxed_scores) == len(all_answer_words) == len(answer_letters)
+        answer_features = list(map(tuple, zip(all_real_words, all_fake_words, real_predicted_label, correct_real_label, fake_predicted_label, correct_fake_label, real_softmaxed_scores, fake_softmaxed_scores, all_answer_words, answer_letters)))
 
         with open(ablation_filename, write_append_trigger) as af:
+            af.write('Predicted real answer: #r. Correct real answer: *r.')
+            af.write('Predicted fake wrong answer: #f. Coreect fake wrong answer: *f.')
+
             question_words = translate_tokens(question_words)
             af.write('** {}\n'.format(' '.join(question_words)))
 
-            for (acw, rpl, crl, fpl, cfl, rss, fss, aw, al) in answer_features:
+            for (rw, fw, rpl, crl, fpl, cfl, rss, fss, aw, al) in answer_features:
                 aw = translate_tokens(aw)
                 af.write('{} {} {} {} {} {} {}{}\n'.format(crl, rpl, rss, cfl, fpl, fss, al, ' '.join(aw)))
-                for cw in acw:
-                    # cw should be a tuple with the fake words in 0 and real words in 1
-                    fake_words = translate_tokens(cw[0])
-                    real_words = translate_tokens(cw[1])
-                    af.write('\treal: {}\n\tfake: {}\n\n'.format(' '.join(real_words), ' '.join(fake_words)))
-                af.write('\n')
+
+                rw = translate_tokens(rw)
+                fw = translate_tokens(fw)
+
+                af.write('Real context: {}\n\n'.format(rw))
+                af.write('Fake context: {}\n\n'.format(fw))
+
             af.write('\n')
 
     return -1
