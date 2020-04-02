@@ -610,11 +610,12 @@ def main():
         args = Args()
 
     # Setup logging
-    num_logging_files = len(glob.glob('logging/logging_g-{}_c-{}_*'.format(args.generator_model_type, args.classifier_model_type)))
+    num_logging_files = len(glob.glob('logging/logging_g-{}_c-{}_{}*'.format(args.generator_model_type, args.classifier_model_type, '_'.join(args.domain_words))))
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO,
-                        filename='logging/logging_g-{}_c-{}_{}'.format(args.generator_model_type, args.classifier_model_type, num_logging_files))
+                        filename='logging/logging_g-{}_c-{}_{}-{}'.format(args.generator_model_type, args.classifier_model_type,
+                                                                          '_'.join(args.domain_words), num_logging_files))
 
     if not os.path.exists(args.output_dir):
         raise Exception('Output directory does not exist here ({})'.format(args.output_dir))
@@ -627,7 +628,7 @@ def main():
                         'Fix one of --train, --evaluate_test, --evaluate_dev, or --clear_output_dir')
 
     # within output and saved folders create a folder with domain words to keep output and saved objects
-    folder_name = '-'.join([args.generator_model_type, args.classifier_model_type])
+    folder_name = '-'.join([args.generator_model_type, args.classifier_model_type, '_'.join(args.domain_words)])
     proposed_output_dir = os.path.join(args.output_dir, folder_name)
     if not os.path.exists(proposed_output_dir):
         os.makedirs(proposed_output_dir)
