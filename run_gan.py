@@ -628,8 +628,8 @@ def main():
                         'Fix one of --train, --evaluate_test, --evaluate_dev, or --clear_output_dir')
 
     # within output and saved folders create a folder with domain words to keep output and saved objects
-    folder_name = '-'.join([args.generator_model_type, args.classifier_model_type, '_'.join(args.domain_words)])
-    proposed_output_dir = os.path.join(args.output_dir, folder_name)
+    folder_name_output = '-'.join([args.generator_model_type, args.classifier_model_type, '_'.join(args.domain_words)])
+    proposed_output_dir = os.path.join(args.output_dir, folder_name_output)
     if not os.path.exists(proposed_output_dir):
         os.makedirs(proposed_output_dir)
     else:
@@ -654,7 +654,8 @@ def main():
     args.output_dir = proposed_output_dir
 
     # reassign cache dir based on domain words
-    proposed_cache_dir = os.path.join(args.cache_dir, folder_name)
+    folder_name_cache = '-'.join([args.transformer_name])
+    proposed_cache_dir = os.path.join(args.cache_dir, folder_name_cache)
     if not os.path.exists(proposed_cache_dir):
         os.makedirs(proposed_cache_dir)
 
