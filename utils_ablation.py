@@ -78,12 +78,13 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
                 pad_index = len(attention_list) - 1
 
             real_ids = inputs['input_ids'][i, j, seq_end_index:pad_index]
-            fake_ids = fake_inputs['input_ids'][i, j, seq_end_index:pad_index]
+            fake_ids = fake_inputs['inputs_embeds']._indices()
+            fake_ids = fake_ids[1, :].view(*fake_inputs['input_ids'].shape)
+            fake_ids = fake_ids[i, j, seq_end_index:pad_index].long()
 
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
             fake_words = tokenizer.convert_ids_to_tokens(fake_ids)
 
-            # window_size = 4
             my_attention_mask = fake_inputs['my_attention_mask'][i, j, seq_end_index:pad_index].tolist()
 
             assert len(real_words) == len(fake_words) == len(my_attention_mask), 'Len of real_words ({}), len of fake_words ({}) and len of my_attention_mask ({}) does not match'.format(len(real_words),
