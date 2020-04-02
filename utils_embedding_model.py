@@ -72,7 +72,7 @@ def feature_loader(args, tokenizer, examples):
 
             input_mask = [1]*len(input_ids)
 
-            words = wordpunct_tokenize(context)
+            words = wordpunct_tokenize(context.lower())
             # words = [''.join([c for c in word if c.isalnum()]) for word in words if word not in punctuation]
 
             # the model has it's own tokenizing so if the word is not there have to use the noise/ pad embedding
@@ -91,7 +91,11 @@ def feature_loader(args, tokenizer, examples):
 
             assert tokens.shape == predictions.shape
 
+            # TODO check this and make sure it makes sense
             predictions = predictions.squeeze().tolist()
+
+            # throw anything below 0.5 to 0
+            predictions = [p if p >= 0.5 else 0. for p in predictions]
 
             # line up predictions with the context words
 

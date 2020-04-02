@@ -219,17 +219,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # print(torch.max(list(classifierM.parameters())[0].grad))
                 # print('*****************************************************************')
 
-                if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
-                    raise Exception(
-                        'There is no gradient parameters for the generator (all None) in epoch {} iteration {} minibatch {}!'.format(
-                            epoch, batch_iterate, minibatch_iterate))
-                if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in
-                        range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
-                    logger.warning(
-                        'There is some zero gradient parameters for the generator in epoch {} iteration {} minibatch {}!'.format(epoch,
-                                                                                                                    batch_iterate, minibatch_iterate))
-                    # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
-
                 # detach the inputs so the gradient graphs don't reach back, only need them for classifier
                 fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
 
@@ -264,21 +253,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                     # print(torch.max(list(classifierM.parameters())[i].grad))
                 # print('*****************************************************************')
 
-                if all([list(classifierM.parameters())[i].grad is None for i in
-                        range(len(list(classifierM.parameters())))]):
-                    raise Exception(
-                        'There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(
-                            epoch, batch_iterate))
-                if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in
-                        range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
-                    logger.warning(
-                        'There are some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch,
-                                                                                                                      batch_iterate))
-                    # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
-
                 # add errors together for logging purposes
                 # errorC = error_real[0] + error_fake[0] if not no_classifier_error else -1.
-                errorD = error_real_d + errorG_d
+                # errorD = error_real_d + errorG_d
 
                 # log error for this step
                 # logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item() if not no_classifier_error else -1., 3)))
@@ -308,8 +285,32 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 round(sum([minibatch_error_classifier_c, minibatch_error_generator_c]), 4)
             ))
 
+            if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
+                raise Exception(
+                    'There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(
+                        epoch, batch_iterate))
+            if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in
+                    range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
+                logger.warning(
+                    'There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(
+                        epoch,
+                        batch_iterate))
+                # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+
             # Update generatorM parameters
             generatorO.step()
+
+            if all([list(classifierM.parameters())[i].grad is None for i in
+                    range(len(list(classifierM.parameters())))]):
+                raise Exception(
+                    'There are no gradient parameters for the classifier (all None) in epoch {} iteration {}!'.format(
+                        epoch, batch_iterate))
+            if any([torch.max(torch.abs(list(classifierM.parameters())[i].grad)) == 0 for i in
+                    range(len(list(classifierM.parameters()))) if list(classifierM.parameters())[i].grad is not None]):
+                logger.warning(
+                    'There are some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch,
+                                                                                                                  batch_iterate))
+                # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
             # update classifier parameters
             classifierO.step()
@@ -590,7 +591,7 @@ def main():
                 self.do_train = True
                 self.use_gpu = False
                 self.overwrite_output_dir = True
-                self.overwrite_cache_dir = False
+                self.overwrite_cache_dir = True
                 self.clear_output_dir = False
                 self.seed = 1234
                 self.max_length = 128
@@ -599,7 +600,7 @@ def main():
                 self.save_steps = 200
                 self.attention_window_size = 10
                 self.max_attention_words = 3
-                self.essential_terms_hidden_dim = 100
+                self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.05
                 self.use_corpus = True
                 self.evaluate_all_models = True
