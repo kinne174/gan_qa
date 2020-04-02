@@ -109,15 +109,15 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
 
         current_real_label = inputs['classification_labels'][i, :]
         current_fake_label = fake_inputs['classification_labels'][i, :]
-        correct_real_label = [' ' if lab == 0 else '*r' for lab in current_real_label]
-        correct_fake_label = [' ' if lab == 1 else '*f' for lab in current_fake_label]
+        correct_real_label = ['  ' if lab == 0 else '*r' for lab in current_real_label]
+        correct_fake_label = ['  ' if lab == 1 else '*f' for lab in current_fake_label]
 
         current_real_prediction = torch.argmax(real_predictions[i, :])
         current_fake_prediction = torch.argmin(fake_predictions[i, :])
 
-        real_predicted_label = [' '] * 4
+        real_predicted_label = ['  '] * 4
         real_predicted_label[current_real_prediction.item()] = '#r'
-        fake_predicted_label = [' ']*4
+        fake_predicted_label = ['  ']*4
         fake_predicted_label[current_fake_prediction.item()] = '#f'
 
         real_softmaxed_scores = [round(ss, 3) for ss in sigmoid(real_predictions[i, :]).squeeze().tolist()]
@@ -140,7 +140,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
                 rw = translate_tokens(rw)
                 fw = translate_tokens(fw)
 
-                af.write('Real context: {}\n\n'.format(' '.join(rw)))
+                af.write('Real context: {}\n'.format(' '.join(rw)))
                 af.write('Fake context: {}\n\n'.format(' '.join(fw)))
 
             af.write('\n')
