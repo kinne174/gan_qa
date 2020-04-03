@@ -94,9 +94,12 @@ def feature_loader(args, tokenizer, examples):
             # TODO check this and make sure it makes sense
             predictions = predictions.squeeze().tolist()
 
-            # throw anything below 0.5 to 0
-            quantile_50 = np.quantile(predictions, 0.5)
-            predictions = [p if p >= quantile_50 else 0. for p in predictions]
+            # throw anything below  60th quantile to zero
+            quant = .6
+            quantile_ = np.quantile(predictions, quant)
+            predictions = [p if p >= quantile_ else 0. for p in predictions]
+
+            # assert sum(predictions > quantile_)/len(predictions) >= 1-quant, 'The sum ({}) is not more than {}'.format(sum(predictions > quantile_)/len(predictions), 1-quant)
 
             # line up predictions with the context words
 
