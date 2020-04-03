@@ -95,7 +95,8 @@ def feature_loader(args, tokenizer, examples):
             predictions = predictions.squeeze().tolist()
 
             # throw anything below 0.5 to 0
-            predictions = [p if p >= 0.5 else 0. for p in predictions]
+            quantile_50 = np.quantile(predictions, 0.5)
+            predictions = [p if p >= quantile_50 else 0. for p in predictions]
 
             # line up predictions with the context words
 

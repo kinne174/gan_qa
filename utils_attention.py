@@ -267,8 +267,8 @@ class AttentionEssential(nn.Module):
 
                 try:
 
-                    weighted_perm = np.random.choice(non_zero_indices_np, size=(non_zero_indices_np.shape[0],), replace=False,
-                                                     p=prob_vector_np)
+                    weighted_perm = np.random.choice(non_zero_indices_np, size=(non_zero_indices_np.shape[0],), replace=False, p=prob_vector_np)
+
                 except ValueError:
 
                     non_zero_and_probs = list(map(tuple, zip(non_zero_indices_np, prob_vector_np)))
