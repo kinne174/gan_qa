@@ -265,8 +265,17 @@ class AttentionEssential(nn.Module):
                 non_zero_indices_np = non_zero_indices.cpu().numpy()
                 prob_vector_np = prob_vector.cpu().numpy()
 
-                weighted_perm = np.random.choice(non_zero_indices_np, size=(non_zero_indices_np.shape[0],), replace=False,
-                                                 p=prob_vector_np)
+                try:
+
+                    weighted_perm = np.random.choice(non_zero_indices_np, size=(non_zero_indices_np.shape[0],), replace=False,
+                                                     p=prob_vector_np)
+                except ValueError:
+
+                    non_zero_and_probs = list(map(tuple, zip(non_zero_indices_np, prob_vector_np)))
+                    non_zero_and_probs.sort(key=lambda t: t[1])
+                    weighted_perm, _ = map(list, zip(*non_zero_and_probs))
+
+
                 indices_to_mask = weighted_perm[:num_to_mask]
                 shared_tokens_to_mask = [shared_tokens[itm] for itm in indices_to_mask]
                 indices_to_mask = [i for i in range(shared_tokens.shape[0]) if shared_tokens[i] in shared_tokens_to_mask]
