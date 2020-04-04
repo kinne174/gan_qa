@@ -504,9 +504,9 @@ def main():
                             help='Name of the classifier model to use')
         parser.add_argument('--classifier_model_name', default=None, type=str,
                             help='Name or path to classifier model.')
-        parser.add_argument('--classifier_hidden_dim', default=None, type=int,
+        parser.add_argument('--classifier_hidden_dim', default=100, type=int,
                             help='The dimension of the hidden dimension of LSTM cell in linear classifier')
-        parser.add_argument('--classifier_embedding_dim', default=None, type=int,
+        parser.add_argument('--classifier_embedding_dim', default=50, type=int,
                             help='The dimension of the word embedding of the linear classifier')
         parser.add_argument('--attention_model_type', default='essential', type=str,
                             help='Name of attention model to use')
