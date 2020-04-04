@@ -198,8 +198,8 @@ def example_loader(args, subset):
                     logger_ind += 1
 
 
-                logger.info('The number of examples added with one-hop word "{}" is {}'.format(kw, len(all_examples)-num_examples))
-                num_examples = len(all_examples)
+            logger.info('The number of examples added with one-hop word "{}" is {}'.format(kw, len(all_examples)-num_examples))
+            num_examples = len(all_examples)
 
             # mainly for code-testing purposes
             if args.cutoff is not None and len(all_examples) >= args.cutoff*2 and subset == 'train':

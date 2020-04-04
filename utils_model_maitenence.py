@@ -39,9 +39,9 @@ def inititalize_models(args, tokenizer):
                               }
     classifier_config_dicts = {'linear': {'num_choices': 4,
                                           'in_features': args.max_length,
-                                          'hidden_features': 100,
+                                          'hidden_features': args.classifier_hidden_dim,
                                           'vocab_size': tokenizer.vocab_size,
-                                          'embedding_dimension': 10,},
+                                          'embedding_dimension': args.classifier_embedding_dim,},
                                'bert': {'pretrained_model_name_or_path': args.classifier_model_name,
                                         'num_labels': 4,
                                         'finetuning_task': 'ARC'},
