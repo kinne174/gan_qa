@@ -146,3 +146,85 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
             af.write('\n')
 
     return -1
+
+
+def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions):
+    if not args.transformer_name == 'albert':
+        raise NotImplementedError
+
+    assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])
+
+    if os.path.exists(ablation_filename):
+        write_append_trigger = 'a'
+    else:
+        write_append_trigger = 'w'
+
+        with open(ablation_filename, write_append_trigger) as af:
+            af.write('Ablation Study start:\n\n')
+
+    assert inputs['input_ids'].shape[0] == fake_inputs['input_ids'].shape[0], 'inputs batch size ({}) is not the same as fake_inputs batch size ({})'.format(inputs['input_ids'].shape[0], fake_inputs['input_ids'].shape[0])
+    batch_size = inputs['input_ids'].shape[0]
+
+    for i in range(batch_size):
+        all_real_words = []
+        all_fake_words = []
+        for j in range(4):
+            seq_end_index = inputs['token_type_ids'][i, j, :].tolist().index(1)
+
+            attention_list = inputs['attention_mask'][i, j, :].tolist()
+            if 0 in attention_list:
+                pad_index = attention_list.index(0)
+            else:
+                pad_index = len(attention_list) - 1
+
+            real_ids = inputs['input_ids'][i, j, seq_end_index:pad_index]
+            fake_ids = fake_inputs['inputs_embeds']._indices()
+            fake_ids = fake_ids[1, :].view(*fake_inputs['input_ids'].shape)
+            fake_ids = fake_ids[i, j, seq_end_index:pad_index].long()
+
+            real_words = tokenizer.convert_ids_to_tokens(real_ids)
+            fake_words = tokenizer.convert_ids_to_tokens(fake_ids)
+
+            my_attention_mask = fake_inputs['my_attention_mask'][i, j, seq_end_index:pad_index].tolist()
+
+            assert len(real_words) == len(fake_words) == len(
+                my_attention_mask), 'Len of real_words ({}), len of fake_words ({}) and len of my_attention_mask ({}) does not match'.format(
+                len(real_words),
+                len(fake_words),
+                len(my_attention_mask))
+
+            att_counter = 1
+            new_fake_words = []
+            new_real_words = []
+            for k, att in enumerate(my_attention_mask):
+                if att == 1:
+                    new_fake_words.extend(['*{}'.format(att_counter)] + [fake_words[k]] + ['*{}'.format(att_counter)])
+                    new_real_words.extend(['*{}'.format(att_counter)] + [real_words[k]] + ['*{}'.format(att_counter)])
+
+                    att_counter += 1
+                else:
+                    new_fake_words.append(fake_words[k])
+                    new_real_words.append(real_words[k])
+
+            all_fake_words.append(new_fake_words)
+            all_real_words.append(new_real_words)
+
+            real_softmaxed_scores = [round(ss, 3) for ss in sigmoid(real_predictions[i, :]).squeeze().tolist()]
+            fake_softmaxed_scores = [round(ss, 3) for ss in sigmoid(fake_predictions[i, :]).squeeze().tolist()]
+
+            assert len(all_real_words) == len(all_fake_words) == len(real_softmaxed_scores) == len(fake_softmaxed_scores)
+            out_features = list(map(tuple, zip(all_real_words, all_fake_words, real_softmaxed_scores, fake_softmaxed_scores)))
+
+            with open(ablation_filename, write_append_trigger) as af:
+                for (rw, fw, rss, fss) in out_features:
+                    aw = translate_tokens(aw)
+                    af.write('Real score: {}, Fake score: {}\n'.format(rss, fss))
+
+                    rw = translate_tokens(rw)
+                    fw = translate_tokens(fw)
+
+                    af.write('Real words: {}\n'.format(' '.join(rw)))
+                    af.write('Fake words: {}\n\n'.format(' '.join(fw)))
+
+                af.write('\n')
+
