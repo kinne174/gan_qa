@@ -86,7 +86,8 @@ def load_and_cache_features(args, tokenizer, subset):
     assert subset in ['train', 'dev', 'test']
 
     cutoff_str = '' if args.cutoff is None else '_cutoff{}'.format(args.cutoff)
-    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}{}'.format(subset, args.tokenizer_name, args.max_length, cutoff_str))
+    corpus_str = '_WithCorpus' if (args.use_corpus and subset == 'train') else ''
+    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}{}{}'.format(subset, args.tokenizer_name, args.max_length, cutoff_str, corpus_str))
     if os.path.exists(cached_features_filename) and not args.overwrite_cache_dir:
         logger.info('Loading features from ({})'.format(cached_features_filename))
         features = load_features(cached_features_filename)
@@ -446,7 +447,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
 
             real_loss += real_error.mean().item()
 
-        if args.do_ablation and batch_ind in ablation_indices:
+        if args.do_ablation:# and batch_ind in ablation_indices:
             assert -1 == ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions)
 
         if all_predictions is None:
