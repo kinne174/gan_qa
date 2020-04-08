@@ -67,7 +67,7 @@ def main():
         elif i == 1:
             most_common = common_words.most_common(7)
             keywords_list = [t[0] for t in most_common if t[0] not in args.domain_words]
-            print('The most common words to search on are {}'.format(', '.join(keywords_list)))
+            print('The most common words to search on are {}\n To overwrite use "--overwrite_output_file".'.format(', '.join(keywords_list)))
             write_flag = 'a'
         else:
             raise NotImplementedError
@@ -87,6 +87,7 @@ def main():
                 line = line.lower()
                 sentence_words = word_tokenize(line)
                 sentence_words = [w for w in sentence_words if w.isalnum()]
+                new_sentence = ' '.join(sentence_words)
 
                 # determine if the sentence has any domain words
                 keywords_in_sentence = [kw in sentence_words for kw in keywords_list]
@@ -96,7 +97,7 @@ def main():
                 elif len(sentence_words) <= 5:
                     continue
                 else:
-                    all_valid_sentences.append(line)
+                    all_valid_sentences.append(new_sentence)
 
                     if i == 0:
                         common_words.update([w for w in sentence_words if w not in stop_words])
