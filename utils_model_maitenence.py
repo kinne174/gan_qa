@@ -139,7 +139,7 @@ def load_models(args, tokenizer):
     attention_config_class, attention_model_class = attention_models_and_config_classes[args.attention_model_type]
 
     # load model
-    model_folders = glob.glob(os.path.join(args.output_dir, '{}_*'.format(args.transformer_name)))
+    model_folders = glob.glob(os.path.join(args.output_dir, '{}-*-*'.format(args.transformer_name)))
     assert len(model_folders) > 0, 'No model parameters found'
     indices_dash = [len(mf) - mf[::-1].index('-') for mf in model_folders]
 

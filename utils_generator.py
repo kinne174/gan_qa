@@ -296,12 +296,13 @@ class MyAlbertForMaskedLM(nn.Module):
                     onehot.zero_()
                     onehot.scatter_(1, torch.tensor([temp_input_ids[i, j]]).unsqueeze(0), 1)
                     onehots[i, j, :] = onehot
+
         # change to dimension [4*batch size*max length, vocab size] to make multiplying by embeddings in classifier easier
         onehots = onehots.view(-1, onehots.shape[-1])
-        # change to sparse for memory savage...?? not sure if that actually helps
+        # change to sparse for memory saveage...?? not sure if that actually helps
         onehots = onehots.to_sparse()
 
-        # TODOfixed should output a tensor of dimension [batch size, 4, max length, vocab size] with one hot vectos along the fourth dimension
+        # should output a tensor of dimension [batch size, 4, max length, vocab size] with one hot vectos along the fourth dimension
         out_dict = {k: v for k, v in kwargs.items()}
         # reshape to resemble known form
         out_dict['input_ids'] = input_ids

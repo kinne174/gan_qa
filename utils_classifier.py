@@ -97,6 +97,8 @@ class ClassifierNet(torch.nn.Module):
 
         model_to_save = self
 
+        # TODO save dimensions of embedding and hidden
+
         # If we save using the predefined names, we can load using `from_pretrained`
         output_model_file = os.path.join(save_directory, 'linear_weights.pt')
         torch.save(model_to_save.state_dict(), output_model_file)
