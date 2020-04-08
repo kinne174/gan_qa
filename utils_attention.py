@@ -257,7 +257,7 @@ class AttentionEssential(nn.Module):
 
                 non_zero_indices = attention_mask.nonzero().reshape((-1))
 
-                num_to_mask = int(non_zero_indices.shape[0]*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
+                num_to_mask = int((all_attention_mask.shape[2]//2)*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
 
                 non_zeros = attention_mask[non_zero_indices]
                 prob_vector = non_zeros/torch.sum(non_zeros)
@@ -283,7 +283,7 @@ class AttentionEssential(nn.Module):
                 new_input_ids = torch.tensor([self.mask_id if i in indices_to_mask else id for i, id in enumerate(input_ids)], dtype=torch.long).reshape((-1))
 
                 new_attention_mask = torch.tensor([1 if i in indices_to_mask else 0 for i in range(attention_mask.shape[0])], dtype=torch.long).reshape((-1,))
-                assert sum(new_attention_mask) >= num_to_mask, 'Sum ({}) is not greater/ equal to num_to_mask ({})'.format(sum(new_attention_mask), num_to_mask)
+                # assert sum(new_attention_mask) >= num_to_mask, 'Sum ({}) is not greater/ equal to num_to_mask ({})'.format(sum(new_attention_mask), num_to_mask)
 
                 out_input_ids[k, j, :] = new_input_ids
                 out_attention_mask[k, j, :] = new_attention_mask
