@@ -101,7 +101,7 @@ def main():
                         common_words.update([w for w in sentence_words if w not in stop_words])
                         all_valid_inds.append(line_ind)
 
-                    if len(all_valid_sentences) % 10000 == 0:
+                    if len(all_valid_sentences) % 1000 == 0:
                         print('The number of sentences in this step is {}'.format(len(all_valid_sentences)))
 
                     if args.output_cutoff is not None and len(all_valid_sentences) >= args.output_cutoff:
