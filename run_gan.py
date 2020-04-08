@@ -163,7 +163,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             if args.do_ablation:
 
-                ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}.txt'.format(global_step))
+                ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}_{}.txt'.format(global_step, '-'.format(args.domain_words)))
 
                 if os.path.exists(ablation_filename):
                     os.remove(ablation_filename)
@@ -412,7 +412,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
         if not os.path.exists(ablation_dir):
             os.makedirs(ablation_dir)
 
-        ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}.txt'.format(checkpoint))
+        ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}_{}.txt'.format(checkpoint, '-'.join(args.domain_words)))
 
         if os.path.exists(ablation_filename):
             os.remove(ablation_filename)
