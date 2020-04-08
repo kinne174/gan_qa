@@ -19,7 +19,7 @@ from utils_embedding_model import feature_loader, load_features, save_features
 from utils_classifier import flip_labels
 from utils_generator import generator_models_and_config_classes
 from utils_model_maitenence import inititalize_models, save_models, load_models
-from utils_ablation import ablation
+from utils_ablation import ablation, ablation_discriminator
 
 # logging
 logger = logging.getLogger(__name__)
@@ -125,6 +125,12 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
+    if args.do_ablation:
+        ablation_dir = os.path.join(args.output_dir, 'ablation_train')
+
+        if not os.path.exists(ablation_dir):
+            os.makedirs(ablation_dir)
+
     best_dev_acc = 0.0
     global_step = 0
 
@@ -155,6 +161,13 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             minibatch_error_classifier_c = 0
             minibatch_error_generator_c = 0
 
+            if args.do_ablation:
+
+                ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}.txt'.format(global_step))
+
+                if os.path.exists(ablation_filename):
+                    os.remove(ablation_filename)
+
             for minibatch_iterate, minibatch in enumerate(minibatch_iterator):
 
                 # TODOfixed should I be splitting it up so that the Generator and Classifier get different input?
@@ -169,6 +182,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                           'discriminator_labels': minibatch[5],
                           'sentences_type': minibatch[6],
                           }
+                batch_size = inputs['input_ids'].shape[0]
 
                 # Train generator
                 generatorM.train()
@@ -188,7 +202,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 # get the predictions of which answers are the correct pairing from the classifier
                 fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
-                predictions, (errorG_c, errorG_d) = classifierM(**fake_inputs)
+                predictions_g, (errorG_c, errorG_d) = classifierM(**fake_inputs)
 
                 if all((errorG_c, errorG_d)) is None:
                     logger.warning('ErrorG is None!')
@@ -198,7 +212,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 #errorG_c is classification error, errorG_d is discriminator error
                 if errorG_c is not None:
-                    errorG_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
+                    errorG_c /= (torch.sum(batch[6]) * args.minibatch_size) # if sentences_type changes then this must change too!
                     errorG_c.backward(retain_graph=True)
 
                     minibatch_error_generator_c += errorG_c.detach().item()
@@ -224,16 +238,15 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
 
                 # see if the classifier can determine difference between fake and real data
-                predictions_real, (error_real_c, error_real_d) = classifierM(**inputs)
+                predictions_c, (error_real_c, error_real_d) = classifierM(**inputs)
 
                 if all((error_real_c, error_real_d)) is None:
                     logger.warning('Error_real is None!')
                     raise Exception('Error_real is None!')
 
-
                 # error_real_c is classification error, error_real_d is discriminator error
                 if error_real_c is not None:
-                    error_real_c /= torch.sum(batch[6]) # if sentences_type changes then this must change too!
+                    error_real_c /= (torch.sum(batch[6]) * args.minibatch_size) # if sentences_type changes then this must change too!
                     error_real_c.backward(retain_graph=True)
 
                     minibatch_error_classifier_c += error_real_c.detach().item()
@@ -243,23 +256,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 minibatch_error_classifier_d += error_real_d.detach().item()
 
-                # print('generator model')
-                # for i in range(len(list(generatorM.parameters()))):
-                #     print(i)
-                #     print(list(generatorM.parameters())[i].grad)
-                # print(torch.max(list(generatorM.parameters())[i].grad))
-                # print('classifier model')
-                # for i in range(len(list(classifierM.parameters()))):
-                #     print(list(classifierM.parameters())[i].grad)
-                    # print(torch.max(list(classifierM.parameters())[i].grad))
-                # print('*****************************************************************')
-
-                # add errors together for logging purposes
-                # errorC = error_real[0] + error_fake[0] if not no_classifier_error else -1.
-                # errorD = error_real_d + errorG_d
-
-                # log error for this step
-                # logger.info('The classifier (classification) error is {}'.format(round(errorC.detach().item() if not no_classifier_error else -1., 3)))
+                if args.do_ablation:
+                    ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, predictions_c[1], predictions_g[1])
 
             minibatch_iterator.close()
 
@@ -363,7 +361,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                     if eval_results['accuracy'] > best_dev_acc:
                         best_dev_acc = eval_results['accuracy']
                         best_dev_loss = eval_results['loss']
-                        best_epoch = epoch
+                        best_step = global_step
 
                     logger.info(
                         'The dev accuracy during training at checkpoint {} is {}, loss is {}'.format(global_step,
@@ -381,7 +379,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
     if args.evaluate_during_training:
         logger.info(
             'The best dev accuracy after training is {}, loss is {} at epoch {}.'.format(round(best_dev_acc, 3),
-                                                                            round(best_dev_loss, 3), best_epoch))
+                                                                            round(best_dev_loss, 3), best_step))
 
 
 def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, test=False):
@@ -577,13 +575,13 @@ def main():
                 self.data_dir = '../ARC/ARC-with-context/'
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
-                self.tokenizer_name = 'albert-base-v2'
+                self.tokenizer_name = 'distilroberta-base'
                 self.generator_model_type = 'seq'
                 self.generator_model_name = 'albert-base-v2'
                 self.classifier_model_type = 'linear'
                 self.classifier_model_name = 'albert-base-v2'
                 self.attention_model_type = 'essential'
-                self.transformer_name = 'albert'
+                self.transformer_name = 'roberta'
                 self.evaluate_during_training = False
                 self.cutoff = 50
                 self.epochs = 3
@@ -599,7 +597,7 @@ def main():
                 self.overwrite_cache_dir = True
                 self.clear_output_dir = False
                 self.seed = 1234
-                self.max_length = 128
+                self.max_length = 256
                 self.batch_size = 2
                 self.do_lower_case = True
                 self.save_steps = 200
