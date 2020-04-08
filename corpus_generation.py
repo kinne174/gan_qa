@@ -54,6 +54,7 @@ def main():
 
     common_words = Counter()
     all_valid_inds = []
+    num_all_sentences = 0
 
     output_filename = os.path.join(args.output_dir, 'lm_sentences_{}.txt'.format('-'.join(args.domain_words)))
     if os.path.exists(output_filename) and not args.overwrite_output_file:
@@ -100,6 +101,9 @@ def main():
                         common_words.update([w for w in sentence_words if w not in stop_words])
                         all_valid_inds.append(line_ind)
 
+                    if len(all_valid_sentences) % 10000 == 0:
+                        print('The number of sentences in this step is {}'.format(len(all_valid_sentences)))
+
                     if args.output_cutoff is not None and len(all_valid_sentences) >= args.output_cutoff:
                         break
 
@@ -110,6 +114,10 @@ def main():
         with codecs.open(output_filename, write_flag) as handle:
             for sentence in all_valid_sentences:
                 handle.write(sentence)
+
+        num_all_sentences += len(all_valid_sentences)
+
+    print('The total sentences is {}'.format(num_all_sentences))
 
 
 if __name__ == '__main__':
