@@ -67,6 +67,7 @@ def main():
         elif i == 1:
             most_common = common_words.most_common(7)
             keywords_list = [t[0] for t in most_common if t[0] not in args.domain_words]
+            print('The most common words to search on are {}'.format(', '.join(keywords_list)))
             write_flag = 'a'
         else:
             raise NotImplementedError
@@ -102,7 +103,7 @@ def main():
                         all_valid_inds.append(line_ind)
 
                     if len(all_valid_sentences) % 1000 == 0:
-                        print('The number of sentences in this step is {}'.format(len(all_valid_sentences)))
+                        print('The number of sentences in step {} is {}'.format(i+1, len(all_valid_sentences)))
 
                     if args.output_cutoff is not None and len(all_valid_sentences) >= args.output_cutoff:
                         break
