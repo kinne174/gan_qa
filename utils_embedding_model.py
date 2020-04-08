@@ -26,12 +26,102 @@ class ArcFeature(object):
         self.classification_label = classification_label
         self.discriminator_labels = [1]*4
 
+class HuggingfaceTranslators:
+    def __init__(self, transformer_name):
+        valid_transformers = ['albert', 'roberta']
+        assert transformer_name in valid_transformers, 'transformer must be one of {}'.format(' '.join(valid_transformers))
+
+        self.transformer_name = transformer_name
+
+    def AlbertTranslator(self, tokenizer, context_tokens, predictions):
+
+        new_predictions = []
+        shared_tokens = []
+        prediction_ind = 0
+        # if token is a special token then assign it zero (other than <unk>)
+        for token in context_tokens:
+            try:
+                if token in tokenizer.all_special_tokens:
+                    if token == '<unk>':
+                        new_predictions.append(predictions[prediction_ind])
+                        prediction_ind += 1
+                    else:
+                        new_predictions.append(0.)
+                    shared_tokens.append(0)
+                elif token in punctuation or token == '▁':
+                    new_predictions.append(0.)
+                    prediction_ind += 1
+                    shared_tokens.append(0)
+                elif '▁' not in token:  # don't know what this character is, had to copy paste from debugger
+                    new_predictions.append(predictions[prediction_ind - 1])
+                    shared_tokens.append(prediction_ind + 1)
+                else:
+                    new_predictions.append(predictions[prediction_ind])
+                    shared_tokens.append(prediction_ind + 1)
+                    prediction_ind += 1
+
+            # This stuff should not activate but just in case...**
+            except IndexError:
+                break
+
+        if len(new_predictions) > len(context_tokens):
+            new_predictions = new_predictions[:len(context_tokens)]
+            shared_tokens = shared_tokens[:len(context_tokens)]
+        if len(new_predictions) < len(context_tokens):
+            new_predictions.extend([np.mean(predictions)] * (len(context_tokens) - len(new_predictions)))
+            shared_tokens.extend([shared_tokens[-1]] * (len(context_tokens) - len(shared_tokens)))
+        # **
+
+        return new_predictions, shared_tokens
+
+    def RobertaTranslator(self, tokenizer, context_tokens, predictions):
+        new_predictions = []
+        shared_tokens = []
+        prediction_ind = 0
+        # if token is a special token then assign it zero (other than <unk>)
+        for token_ind, token in enumerate(context_tokens):
+            try:
+                if token in tokenizer.all_special_tokens:
+                    if token == tokenizer.unk_token:
+                        new_predictions.append(predictions[prediction_ind])
+                        prediction_ind += 1
+                    else:
+                        new_predictions.append(0.)
+                    shared_tokens.append(0)
+                elif 'Ġ' not in token and token_ind is not 0:  # don't know what this character is, had to copy paste from debugger
+                    new_predictions.append(predictions[prediction_ind - 1])
+                    shared_tokens.append(prediction_ind + 1)
+                else:
+                    new_predictions.append(predictions[prediction_ind])
+                    shared_tokens.append(prediction_ind + 1)
+                    prediction_ind += 1
+
+            # This stuff should not activate but just in case...**
+            except IndexError:
+                break
+
+        if len(new_predictions) > len(context_tokens):
+            new_predictions = new_predictions[:len(context_tokens)]
+            shared_tokens = shared_tokens[:len(context_tokens)]
+        if len(new_predictions) < len(context_tokens):
+            new_predictions.extend([np.mean(predictions)] * (len(context_tokens) - len(new_predictions)))
+            shared_tokens.extend([shared_tokens[-1]] * (len(context_tokens) - len(shared_tokens)))
+        # **
+
+        return new_predictions, shared_tokens
+
+    def translate(self, tokenizer, context_tokens, predictions):
+        if self.transformer_name == 'albert':
+            return self.AlbertTranslator(tokenizer, context_tokens, predictions)
+        elif self.transformer_name == 'roberta':
+            return self.RobertaTranslator(tokenizer, context_tokens, predictions)
+        else:
+            raise NotImplementedError
+
 
 def feature_loader(args, tokenizer, examples):
 
-    if not args.transformer_name == 'albert':
-        logger.warning('The transformer name is {}'.format(args.transformer_name))
-        raise NotImplementedError
+    Translator = HuggingfaceTranslators(transformer_name=args.transformer_name)
 
     # load the model and translation dict and counter
     model, word_to_idx, _ = load_model(args)
@@ -91,12 +181,11 @@ def feature_loader(args, tokenizer, examples):
 
             assert tokens.shape == predictions.shape
 
-            # TODO check this and make sure it makes sense
             predictions = predictions.squeeze().tolist()
 
-            # throw anything below  60th quantile to zero
-            quant = .6
-            quantile_ = np.quantile(predictions, quant)
+            # throw anything below 50th quantile to zero
+            quant = .5
+            quantile_ = np.quantile([p for p in predictions if p > 1e-6], quant)
             predictions = [p if p >= quantile_ else 0. for p in predictions]
 
             # assert sum(predictions > quantile_)/len(predictions) >= 1-quant, 'The sum ({}) is not more than {}'.format(sum(predictions > quantile_)/len(predictions), 1-quant)
@@ -109,47 +198,8 @@ def feature_loader(args, tokenizer, examples):
             context_ids = input_ids[context_beginning_ind:]
             context_tokens = tokenizer.convert_ids_to_tokens(context_ids)
 
-            # for Albert tokens, will need to change this if using something else
-            if len(context_tokens) == len(predictions):
-                new_predictions = predictions
-                shared_tokens = list(range(len(predictions)))
-            else:
-                new_predictions = []
-                shared_tokens = []
-                prediction_ind = 0
-                # if token is a special token then assign it zero (other than <unk>)
-                for token in context_tokens:
-                    try:
-                        if token in tokenizer.all_special_tokens:
-                            if token == '<unk>':
-                                new_predictions.append(predictions[prediction_ind])
-                                prediction_ind += 1
-                            else:
-                                new_predictions.append(0.)
-                            shared_tokens.append(0)
-                        elif token in punctuation or token == '▁':
-                            new_predictions.append(0.)
-                            prediction_ind += 1
-                            shared_tokens.append(0)
-                        elif '▁' not in token:  # don't know what this character is, had to copy paste from debugger
-                            new_predictions.append(predictions[prediction_ind-1])
-                            shared_tokens.append(prediction_ind+1)
-                        else:
-                            new_predictions.append(predictions[prediction_ind])
-                            shared_tokens.append(prediction_ind+1)
-                            prediction_ind += 1
-
-                # This stuff should not activate but just in case...**
-                    except IndexError:
-                        break
-
-                if len(new_predictions) > len(context_tokens):
-                    new_predictions = new_predictions[:len(context_tokens)]
-                    shared_tokens = shared_tokens[:len(context_tokens)]
-                if len(new_predictions) < len(context_tokens):
-                    new_predictions.extend([np.mean(predictions)]*(len(context_tokens) - len(new_predictions)))
-                    shared_tokens.extend([shared_tokens[-1]]*(len(context_tokens) - len(shared_tokens)))
-                # **
+            # for roberta disregard the G` alone and mark shared when there is no G` preceding the word
+            new_predictions, shared_tokens = Translator.translate(tokenizer, context_tokens, predictions)
 
             assert len(new_predictions) == len(shared_tokens) == sum(token_type_mask), 'There should be the same number of predictions ({}) as shared_tokens ({}) as there are context tokens ({})'.format(len(new_predictions), len(shared_tokens), sum(token_type_mask))
 
