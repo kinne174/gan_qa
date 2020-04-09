@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" serverName="dags">
+  <component name="PublishConfigData" autoUpload="Always" serverName="kinne174@dags.stat.umn.edu:22">
     <serverData>
       <paths name="dags">
         <serverdata>
@@ -9,6 +9,14 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="kinne174@dags.stat.umn.edu:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/kinne174/private/data/gan_qa" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
     </serverData>
+    <option name="myAutoUpload" value="ALWAYS" />
   </component>
 </project>
