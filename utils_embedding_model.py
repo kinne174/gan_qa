@@ -148,7 +148,9 @@ def feature_loader(args, tokenizer, examples):
                     context,
                     add_special_tokens=True,
                     truncation_strategy='only_second',
-                    max_length=args.max_length
+                    max_length=args.max_length,
+                    return_token_type_ids=True,
+                    return_special_tokens_mask=True,
                 )
             except AssertionError as err_msg:
                 logger.info('Assertion error at example id {}: {}'.format(ex_ind, err_msg))
@@ -158,7 +160,15 @@ def feature_loader(args, tokenizer, examples):
             if 'num_truncated_tokens' in inputs and inputs['num_truncated_tokens'] > 0:
                 logger.info('Truncating context for question id {}'.format(ex.example_id))
 
-            input_ids, token_type_mask = inputs['input_ids'], inputs['token_type_ids']
+            if args.transformer_name == 'albert':
+                input_ids, token_type_mask = inputs['input_ids'], inputs['token_type_ids']
+                # convert context ids to tokens
+                context_beginning_ind = token_type_mask.index(1)
+            elif args.transformer_name == 'roberta':
+                input_ids, token_type_mask = inputs['input_ids'], inputs['special_tokens_mask']
+                context_beginning_ind = token_type_mask[1:].index(1) + 1
+            else:
+                raise NotImplementedError
 
             input_mask = [1]*len(input_ids)
 
@@ -184,16 +194,13 @@ def feature_loader(args, tokenizer, examples):
             predictions = predictions.squeeze().tolist()
 
             # throw anything below 50th quantile to zero
-            quant = .5
-            quantile_ = np.quantile([p for p in predictions if p > 1e-6], quant)
-            predictions = [p if p >= quantile_ else 0. for p in predictions]
+            # quant = .5
+            # quantile_ = np.quantile([p for p in predictions if p > 1e-6], quant)
+            # predictions = [p if p >= quantile_ else 0. for p in predictions]
 
             # assert sum(predictions > quantile_)/len(predictions) >= 1-quant, 'The sum ({}) is not more than {}'.format(sum(predictions > quantile_)/len(predictions), 1-quant)
 
             # line up predictions with the context words
-
-            # convert context ids to tokens
-            context_beginning_ind = token_type_mask.index(1)
 
             context_ids = input_ids[context_beginning_ind:]
             context_tokens = tokenizer.convert_ids_to_tokens(context_ids)
@@ -201,7 +208,10 @@ def feature_loader(args, tokenizer, examples):
             # for roberta disregard the G` alone and mark shared when there is no G` preceding the word
             new_predictions, shared_tokens = Translator.translate(tokenizer, context_tokens, predictions)
 
-            assert len(new_predictions) == len(shared_tokens) == sum(token_type_mask), 'There should be the same number of predictions ({}) as shared_tokens ({}) as there are context tokens ({})'.format(len(new_predictions), len(shared_tokens), sum(token_type_mask))
+            if args.transformer_name == 'albert':
+                assert len(new_predictions) == len(shared_tokens) == sum(token_type_mask), 'There should be the same number of predictions ({}) as shared_tokens ({}) as there are context tokens ({})'.format(len(new_predictions), len(shared_tokens), sum(token_type_mask))
+            elif args.transformer_name == 'roberta':
+                assert len(new_predictions) == len(shared_tokens), 'There should be the same number of predictions ({}) as shared_tokens ({})'.format(len(new_predictions), len(shared_tokens))
 
             attention_mask1 = [0]*context_beginning_ind + new_predictions
             attention_mask2 = [0]*context_beginning_ind + shared_tokens
