@@ -482,7 +482,11 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
 def main():
     parser = argparse.ArgumentParser()
 
-    if not getpass.getuser() == 'Mitch':
+    parser.add_argument('--on_command_line', action='store_true',
+                        help='Invoke if running on command line')
+    args_init = parser.parse_known_args()[0]
+
+    if args_init.on_command_line:
 
         # Required
         parser.add_argument('--transformer_name', default=None, type=str, required=True,
