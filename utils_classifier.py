@@ -114,7 +114,7 @@ class GeneralModelForMultipleChoice(nn.Module):
 
 class ClassifierNet(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, device):
         super(ClassifierNet, self).__init__()
         self.num_choices = config.num_choices
         self.in_dim = config.in_features
@@ -136,6 +136,8 @@ class ClassifierNet(nn.Module):
         self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
         self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
 
+        self.device = device
+
     @staticmethod
     def Wloss(preds, labels):
         return torch.mean(preds*labels)
@@ -150,7 +152,7 @@ class ClassifierNet(nn.Module):
             if os.path.exists(pretrained_model_name_or_path):
                 logger.info('Checkpoint found! Loading pretrained model.')
 
-                model_to_return = cls(kwargs['config'])
+                model_to_return = cls(kwargs['config'], kwargs['device'])
                 model_load_filename = os.path.join(pretrained_model_name_or_path, 'linear_weights.pt')
                 model_to_return.load_state_dict(torch.load(model_load_filename))
 
@@ -159,7 +161,7 @@ class ClassifierNet(nn.Module):
             else:
                 logger.info('Unable to load model. Returning new model.')
 
-        return cls(kwargs['config'])
+        return cls(kwargs['config'], kwargs['device'])
 
     def save_pretrained(self, save_directory):
         assert os.path.isdir(
@@ -313,29 +315,27 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
 
 
 class MyAlbertForMultipleChoice(GeneralModelForMultipleChoice):
-    def __init__(self, pretrained_model_name_or_path, config):
+    def __init__(self, pretrained_model_name_or_path, config, device):
         super(MyAlbertForMultipleChoice, self).__init__(model=AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config))
-        self.device = config.device
+        self.device = device
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, config):
-        return cls(pretrained_model_name_or_path, config)
+    def from_pretrained(cls, pretrained_model_name_or_path, config, device):
+        return cls(pretrained_model_name_or_path, config, device)
 
 
 class MyRobertForMultipleChoice(GeneralModelForMultipleChoice):
-    def __init__(self, pretrained_model_name_or_path, config):
+    def __init__(self, pretrained_model_name_or_path, config, device):
         super(MyRobertForMultipleChoice, self).__init__(model=RobertaForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config))
-        self.device = config.device
+        self.device = device
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, config):
-        return cls(pretrained_model_name_or_path, config)
+    def from_pretrained(cls, pretrained_model_name_or_path, config, device):
+        return cls(pretrained_model_name_or_path, config, device)
 
 
 classifier_models_and_config_classes = {
     'linear': (ClassifierConfig, ClassifierNet),
-    'bert': (BertConfig, BertForMultipleChoice),
     'roberta': (RobertaConfig, MyRobertForMultipleChoice),
-    'xlmroberta': (XLMRobertaConfig, XLMRobertaForMultipleChoice),
     'albert': (AlbertConfig, MyAlbertForMultipleChoice),
 }

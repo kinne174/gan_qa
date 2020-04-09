@@ -58,10 +58,6 @@ def inititalize_models(args, tokenizer):
                                         'output_hidden_states': True},
                                }
 
-    for D in [attention_config_dicts, generator_config_dicts, classifier_config_dicts]:
-        for k in D.keys():
-            D[k].update({'device': args.device})
-
     logger.info('Establishing config classes.')
     attention_config = attention_config_class.from_pretrained(**attention_config_dicts[args.attention_model_type])
     generator_config = generator_config_class.from_pretrained(**generator_config_dicts[args.generator_model_type])
@@ -92,6 +88,10 @@ def inititalize_models(args, tokenizer):
                               'albert': {'pretrained_model_name_or_path': args.classifier_model_name,
                                        'config': classifier_config},
                               }
+
+    for D in [attention_model_dicts, generator_model_dicts, classifier_model_dicts]:
+        for k in D.keys():
+            D[k].update({'device': args.device})
 
     logger.info('Establishing model classes')
     attentionM = attention_model_class.from_pretrained(**attention_model_dicts[args.attention_model_type])

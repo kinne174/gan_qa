@@ -298,32 +298,30 @@ class GeneralModelforMaskedLM(nn.Module):
 
 
 class MyAlbertForMaskedLM(GeneralModelforMaskedLM):
-    def __init__(self, pretrained_model_name_or_path, config):
+    def __init__(self, pretrained_model_name_or_path, config, device):
         super(MyAlbertForMaskedLM, self).__init__()
         self.model = AlbertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
-        self.device = config.device
+        self.device = device
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, config):
-        return cls(pretrained_model_name_or_path, config)
+    def from_pretrained(cls, pretrained_model_name_or_path, config, device):
+        return cls(pretrained_model_name_or_path, config, device)
 
 
 class MyRobertaForMaskedLM(GeneralModelforMaskedLM):
-    def __init__(self, pretrained_model_name_or_path, config):
+    def __init__(self, pretrained_model_name_or_path, config, device):
         super(MyRobertaForMaskedLM, self).__init__()
         self.model = RobertaForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
-        self.device = config.device
+        self.device = device
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, config):
-        return cls(pretrained_model_name_or_path, config)
+    def from_pretrained(cls, pretrained_model_name_or_path, config, device):
+        return cls(pretrained_model_name_or_path, config, device)
 
 
 generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
-    'bert': (BertConfig, BertForMaskedLM),
     'roberta': (RobertaConfig, MyRobertaForMaskedLM),
-    'distilbert': (DistilBertConfig, DistilBertForMaskedLM),
     'albert': (AlbertConfig, MyAlbertForMaskedLM)
 }
 

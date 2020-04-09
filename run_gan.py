@@ -69,7 +69,7 @@ def detach_inputs(fake_inputs, inputs):
 # return if there is a gpu available
 def get_device():
     if torch.cuda.is_available():
-        return torch.device('cuda')
+        return torch.device('cuda:0')
     else:
         return torch.device('cpu')
 
@@ -583,15 +583,15 @@ def main():
                 self.data_dir = '../ARC/ARC-with-context/'
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
-                self.tokenizer_name = 'albert-base-v2'
-                self.generator_model_type = 'albert'
-                self.generator_model_name = 'albert-base-v2'
-                self.classifier_model_type = 'albert'
-                self.classifier_model_name = 'albert-base-v2'
+                self.tokenizer_name = 'roberta-base'
+                self.generator_model_type = 'roberta'
+                self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/checkpoint-4200/'
+                self.classifier_model_type = 'roberta'
+                self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/checkpoint-2600/'
                 self.attention_model_type = 'essential'
-                self.transformer_name = 'albert'
+                self.transformer_name = 'roberta'
                 self.evaluate_during_training = False
-                self.cutoff = 50
+                self.cutoff = None
                 self.epochs = 3
                 self.learning_rate_classifier = 1e-4
                 self.learning_rate_generator = 1e-4
@@ -600,13 +600,13 @@ def main():
                 self.do_evaluate_dev = False
                 self.do_evaluate_test = False
                 self.do_train = True
-                self.use_gpu = False
+                self.use_gpu = True
                 self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
                 self.clear_output_dir = False
                 self.seed = 1234
                 self.max_length = 256
-                self.batch_size = 2
+                self.batch_size = 4
                 self.do_lower_case = True
                 self.save_steps = 200
                 self.attention_window_size = 10
@@ -614,10 +614,10 @@ def main():
                 self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.05
                 self.use_corpus = True
-                self.evaluate_all_models = True
-                self.do_ablation = True
+                self.evaluate_all_models = False
+                self.do_ablation = False
                 self.domain_words = ['moon', 'earth']
-                self.minibatch_size = 4
+                self.minibatch_size = 8
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
 

@@ -45,10 +45,10 @@ class AttentionNet(torch.nn.Module):
 # TODOfixed create attention based on PMI, x from question words: y from answer words, then find them in the context to compute PMI, individual word importance come from matrix of question vs answer words and average/median down the rows and columns
 class AttentionPMI(nn.Module):
     # This idea comes from "Combining Retrieval, Statistics, and Inference to Answer Elementary Science Questions" by Clark et al. 2016
-    def __init__(self, config):
+    def __init__(self, config, device):
         super(AttentionPMI, self).__init__()
 
-        self.device = config.device
+        self.device = device
 
         self.tokenizer = config.tokenizer
         assert isinstance(self.tokenizer, PreTrainedTokenizer)
@@ -68,8 +68,8 @@ class AttentionPMI(nn.Module):
         self.bigram_measures = nltk.collocations.BigramAssocMeasures()
 
     @classmethod
-    def from_pretrained(cls, config):
-        return cls(config)
+    def from_pretrained(cls, config, device):
+        return cls(config, device)
 
     def forward(self, input_ids, my_attention_mask, **kwargs):
 
@@ -225,17 +225,17 @@ class AttentionPMI(nn.Module):
 
 
 class AttentionEssential(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, device):
         super(AttentionEssential, self).__init__()
 
         self.mu_p = config.mu_p
         self.mask_id = config.mask_id
 
-        self.device = config.device
+        self.device = device
 
     @classmethod
-    def from_pretrained(cls, config):
-        return cls(config)
+    def from_pretrained(cls, config, device):
+        return cls(config, device)
 
     def forward(self, **kwargs):
         all_attention_mask = kwargs['my_attention_mask']
