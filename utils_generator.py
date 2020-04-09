@@ -10,17 +10,6 @@ from tqdm import trange
 
 logger = logging.getLogger(__name__)
 
-# return if there is a gpu available
-def get_device():
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    else:
-        return torch.device('cpu')
-
-
-device = get_device()
-
-
 # from https://github.com/bentrevett/pytorch-seq2seq/blob/master/1%20-%20Sequence%20to%20Sequence%20Learning%20with%20Neural%20Networks.ipynb
 class Encoder(nn.Module):
     def __init__(self, input_dim, emb_dim, hid_dim, n_layers, dropout):
@@ -105,7 +94,7 @@ class Decoder(nn.Module):
 
 # from https://discuss.pytorch.org/t/vae-gumbel-softmax/16838
 def sample_gumbel(shape, eps=1e-20):
-    U = torch.Tensor(shape).uniform_(0, 1).to(device)
+    U = torch.Tensor(shape).uniform_(0, 1).to(self.device)
     # logger.info('Generator device is {}'.format(device))
     return -(torch.log(-torch.log(U + eps) + eps))
 
@@ -156,8 +145,8 @@ class Seq2Seq(nn.Module):
         vocab_size = self.decoder.output_dim  # this should be the number of possible vocab words
 
         # tensor to store decoder outputs [max attention masks, batch size, vocab size]
-        outputs = torch.rand((out_len, batch_size, vocab_size)).to(device)
-        # outputs = torch.rand((max_len, batch_size, vocab_size)).to(device)
+        outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
+        # outputs = torch.rand((max_len, batch_size, vocab_size)).to(self.device)
 
         # last hidden state of the encoder is used as the initial hidden state of the decoder
         hidden, cell = self.encoder(temp_input_ids)
@@ -188,7 +177,7 @@ class Seq2Seq(nn.Module):
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
-        onehots = torch.zeros((batch_size, max_len, vocab_size)).to(device)
+        onehots = torch.zeros((batch_size, max_len, vocab_size)).to(self.device)
         onehot = torch.FloatTensor(1, vocab_size)
         for i in range(batch_size):
             for j in range(max_len):
@@ -263,7 +252,7 @@ class GeneralModelforMaskedLM(nn.Module):
         vocab_size = prediction_scores.shape[-1]
 
         # tensor to store decoder outputs [max attention masks, batch size, vocab size]
-        outputs = torch.rand((out_len, batch_size, vocab_size)).to(device)
+        outputs = torch.rand((out_len, batch_size, vocab_size)).to(self.device)
 
         for t in range(1, max_len):
             # place predictions in a tensor holding predictions for each token
@@ -279,7 +268,7 @@ class GeneralModelforMaskedLM(nn.Module):
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
-        onehots = torch.zeros((batch_size, max_len, vocab_size)).to(device)
+        onehots = torch.zeros((batch_size, max_len, vocab_size)).to(self.device)
         onehot = torch.FloatTensor(1, vocab_size)
         for i in range(batch_size):
             for j in range(max_len):
@@ -312,6 +301,7 @@ class MyAlbertForMaskedLM(GeneralModelforMaskedLM):
     def __init__(self, pretrained_model_name_or_path, config):
         super(MyAlbertForMaskedLM, self).__init__()
         self.model = AlbertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
+        self.device = config.device
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
@@ -322,6 +312,7 @@ class MyRobertaForMaskedLM(GeneralModelforMaskedLM):
     def __init__(self, pretrained_model_name_or_path, config):
         super(MyRobertaForMaskedLM, self).__init__()
         self.model = RobertaForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
+        self.device = config.device
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):

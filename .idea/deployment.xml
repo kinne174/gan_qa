@@ -2,18 +2,21 @@
 <project version="4">
   <component name="PublishConfigData" autoUpload="Always" serverName="kinne174@dags.stat.umn.edu:22">
     <serverData>
-      <paths name="dags">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/private/data/gan_qa" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
       <paths name="kinne174@dags.stat.umn.edu:22">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/kinne174/private/data/gan_qa" local="$PROJECT_DIR$" />
+            <mapping deploy="private/PythonProjects/gan_qa" local="$PROJECT_DIR$" />
           </mappings>
+          <excludedPaths>
+            <excludedPath local="true" path="$PROJECT_DIR$/.idea" />
+            <excludedPath local="true" path="$PROJECT_DIR$/logging" />
+            <excludedPath local="true" path="$PROJECT_DIR$/saved" />
+            <excludedPath local="true" path="$PROJECT_DIR$/output" />
+            <excludedPath path="/private/PythonProjects/gan_qa/.idea" />
+            <excludedPath path="/private/PythonProjects/gan_qa/logging" />
+            <excludedPath path="/private/PythonProjects/gan_qa/saved" />
+            <excludedPath path="/private/PythonProjects/gan_qa/output" />
+          </excludedPaths>
         </serverdata>
       </paths>
     </serverData>

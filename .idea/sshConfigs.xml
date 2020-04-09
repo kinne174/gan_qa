@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="SshConfigs">
-    <configs>
-      <sshConfig authType="PASSWORD" host="dags.stat.umn.edu" id="67e7e1ae-570a-4e6e-8ecf-e0c0736a24e5" port="22" nameFormat="DESCRIPTIVE" username="kinne174" />
-    </configs>
-  </component>
-</project>

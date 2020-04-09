@@ -11,15 +11,6 @@ from transformers import PreTrainedTokenizer, PretrainedConfig
 
 logger = logging.getLogger(__name__)
 
-# return if there is a gpu available
-def get_device():
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    else:
-        return torch.device('cpu')
-
-
-device = get_device()
 
 
 class AttentionNet(torch.nn.Module):
@@ -57,6 +48,8 @@ class AttentionPMI(nn.Module):
     def __init__(self, config):
         super(AttentionPMI, self).__init__()
 
+        self.device = config.device
+
         self.tokenizer = config.tokenizer
         assert isinstance(self.tokenizer, PreTrainedTokenizer)
 
@@ -80,7 +73,7 @@ class AttentionPMI(nn.Module):
 
     def forward(self, input_ids, my_attention_mask, **kwargs):
 
-        out_my_attention_mask = torch.LongTensor(*my_attention_mask.shape).to(device)
+        out_my_attention_mask = torch.LongTensor(*my_attention_mask.shape).to(self.device)
         for i in range(input_ids.shape[0]):
             # creates a tensor of dimension [4, max length]
             current_input_ids = input_ids[i, :, :].squeeze()
@@ -116,14 +109,14 @@ class AttentionPMI(nn.Module):
             # context_ids = [[ci for ci in sub_context_ids if ci not in self.bad_ids] for sub_context_ids in context_ids]
 
             # temporary tensor of dimension [4, max length] to hold output masks for all options in current question
-            sub_out_my_attention_mask = torch.LongTensor(*current_input_ids.shape).to(device)
+            sub_out_my_attention_mask = torch.LongTensor(*current_input_ids.shape).to(self.device)
 
             # do a double for loop over each word-pair in question and answer to find words with the largest PMI
             for ii, (sub_answer_ids, sub_context_ids, sub_context_ids_tups) in enumerate(zip(answer_ids, context_ids, context_ids_tups)):
 
                 # initialize different matrices for answer and question just in case a word is not seen in the context it won't affect its bigram pair's score
-                PMI_matrix_a = torch.zeros((len(sub_answer_ids), len(question_ids))).to(device)
-                PMI_matrix_q = torch.zeros((len(question_ids), len(sub_answer_ids))).to(device)
+                PMI_matrix_a = torch.zeros((len(sub_answer_ids), len(question_ids))).to(self.device)
+                PMI_matrix_q = torch.zeros((len(question_ids), len(sub_answer_ids))).to(self.device)
 
                 # for the denominator initialize a counter of the context words
                 context_counter = Counter(sub_context_ids)
@@ -132,7 +125,7 @@ class AttentionPMI(nn.Module):
                 finder = BigramCollocationFinder.from_words(sub_context_ids, window_size=self.window_size)
 
                 # tempororary tensor of dimension [max length] to hold individual attention masks of question/answer/contexts
-                sub_my_attention = torch.LongTensor(current_input_ids.shape[-1],).to(device)
+                sub_my_attention = torch.LongTensor(current_input_ids.shape[-1],).to(self.device)
 
                 # TODOfixed if none of the answer words are in the context then PMI_matrix_q should be a count of the words in the context, similar for question words
                 if all([ai not in context_counter for ai in sub_answer_ids]) and all([qi not in context_counter for qi in question_ids]):
@@ -204,7 +197,7 @@ class AttentionPMI(nn.Module):
                 # find which indices to mask based on the tuples of context words and context indices
                 # indices should be in relation to the [0,.., max length]
                 # no set size for this tensor
-                indices_to_mask = torch.tensor([c_tup[1] for c_tup in sub_context_ids_tups if c_tup[0] in masked_context_ids], dtype=torch.long).to(device)  # might need to make this 2D
+                indices_to_mask = torch.tensor([c_tup[1] for c_tup in sub_context_ids_tups if c_tup[0] in masked_context_ids], dtype=torch.long).to(self.device)  # might need to make this 2D
 
                 if torch.sum(indices_to_mask) == 0:
                     print('hi')
@@ -230,12 +223,15 @@ class AttentionPMI(nn.Module):
 
         return out_dict
 
+
 class AttentionEssential(nn.Module):
     def __init__(self, config):
         super(AttentionEssential, self).__init__()
 
         self.mu_p = config.mu_p
         self.mask_id = config.mask_id
+
+        self.device = config.device
 
     @classmethod
     def from_pretrained(cls, config):

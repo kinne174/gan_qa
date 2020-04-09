@@ -10,16 +10,6 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# return if there is a gpu available
-def get_device():
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    else:
-        return torch.device('cpu')
-
-
-device = get_device()
-
 
 class ClassifierConfig(PretrainedConfig):
 
@@ -63,7 +53,7 @@ class GeneralModelForMultipleChoice(nn.Module):
         batch_size = input_ids.shape[0]
 
         if 'inputs_embeds' in kwargs:
-            embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(device)
+            embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(self.device)
             inputs_embeds = kwargs['inputs_embeds']
             assert inputs_embeds.is_sparse
             temp_inputs_embeds = torch.sparse.mm(inputs_embeds, embeddings)
@@ -191,7 +181,7 @@ class ClassifierNet(nn.Module):
             inputs_embeds = kwargs['inputs_embeds']
 
             # embedding matrix should be of dimension [vocab size, embedding dimension]
-            embedding_mat = self.embedding.weight.to(device)
+            embedding_mat = self.embedding.weight.to(self.device)
 
             # input_embeds should be of dimension [4*batch size*max length, vocab size]
             assert inputs_embeds.is_sparse
@@ -202,7 +192,7 @@ class ClassifierNet(nn.Module):
             temp_input_ids = self.embedding(input_ids.view(-1, input_ids.shape[-1]))
 
         sum_attentions = torch.sum(attention_mask.view(-1, attention_mask.shape[-1]), dim=1) - 1
-        x = torch.empty((input_ids.shape[0] * 4, self.hidden_dim)).to(device)
+        x = torch.empty((input_ids.shape[0] * 4, self.hidden_dim)).to(self.device)
 
         gru_out, last_hidden = self.gru(temp_input_ids)
 
@@ -255,8 +245,8 @@ class ClassifierNet(nn.Module):
 
 def flip_labels(classification_labels, discriminator_labels, **kwargs):
 
-    out_c_labels = torch.ones_like(classification_labels).to(device) - classification_labels
-    out_d_labels = -1*torch.ones_like(discriminator_labels).to(device)
+    out_c_labels = torch.ones_like(classification_labels) - classification_labels
+    out_d_labels = -1*torch.ones_like(discriminator_labels)
 
     out_dict = {k: v for k, v in kwargs.items()}
     out_dict['classification_labels'] = out_c_labels
@@ -325,6 +315,7 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
 class MyAlbertForMultipleChoice(GeneralModelForMultipleChoice):
     def __init__(self, pretrained_model_name_or_path, config):
         super(MyAlbertForMultipleChoice, self).__init__(model=AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config))
+        self.device = config.device
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
@@ -334,6 +325,7 @@ class MyAlbertForMultipleChoice(GeneralModelForMultipleChoice):
 class MyRobertForMultipleChoice(GeneralModelForMultipleChoice):
     def __init__(self, pretrained_model_name_or_path, config):
         super(MyRobertForMultipleChoice, self).__init__(model=RobertaForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config))
+        self.device = config.device
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):

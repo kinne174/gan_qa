@@ -58,6 +58,10 @@ def inititalize_models(args, tokenizer):
                                         'output_hidden_states': True},
                                }
 
+    for D in [attention_config_dicts, generator_config_dicts, classifier_config_dicts]:
+        for k in D.keys():
+            D[k].update({'device': args.device})
+
     logger.info('Establishing config classes.')
     attention_config = attention_config_class.from_pretrained(**attention_config_dicts[args.attention_model_type])
     generator_config = generator_config_class.from_pretrained(**generator_config_dicts[args.generator_model_type])
