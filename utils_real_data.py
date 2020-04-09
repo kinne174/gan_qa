@@ -148,7 +148,7 @@ def example_loader(args, subset):
                     all_valid_sentences.append(sentence)
                     sentence_ind += 1
 
-                if min([len(val) for val in keywords_dict.values()]) >= 10 and getpass.getuser() == 'Mitch':
+                if min([len(val) for val in keywords_dict.values()]) >= 2 and getpass.getuser() == 'Mitch':
                     break
 
                 if line_ind >= 5000000:

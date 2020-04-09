@@ -5,3 +5,6 @@ test.py
 saved/
 logging/
 output/
+
+# hidden folders
+.idea/

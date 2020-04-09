@@ -1,6 +1,5 @@
 import os
 import codecs
-import json_lines
 import nltk
 from nltk import word_tokenize
 from nltk.corpus import stopwords
@@ -111,7 +110,6 @@ def main():
 
                 if args.corpus_cutoff is not None and line_ind >= args.corpus_cutoff:
                     break
-
 
         with codecs.open(output_filename, write_flag) as handle:
             for sentence in all_valid_sentences:
