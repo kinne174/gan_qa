@@ -1,3 +1,7 @@
+from __future__ import division
+from __future__ import print_function
+from __future__ import with_statement
+
 import getpass
 import logging
 import glob
@@ -176,7 +180,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 minibatch = tuple(t.to(args.device) for t in minibatch)
                 inputs = {'input_ids': minibatch[0],
                           'attention_mask': minibatch[1],
-                          'token_type_ids': minibatch[2],
+                          'token_type_ids': minibatch[2] if args.transformer_name in ['albert'] else None,
                           'my_attention_mask': minibatch[3],
                           'classification_labels': minibatch[4],
                           'discriminator_labels': minibatch[5],
@@ -575,13 +579,13 @@ def main():
                 self.data_dir = '../ARC/ARC-with-context/'
                 self.output_dir = 'output/'
                 self.cache_dir = 'saved/'
-                self.tokenizer_name = 'distilroberta-base'
-                self.generator_model_type = 'seq'
+                self.tokenizer_name = 'albert-base-v2'
+                self.generator_model_type = 'albert'
                 self.generator_model_name = 'albert-base-v2'
-                self.classifier_model_type = 'linear'
+                self.classifier_model_type = 'albert'
                 self.classifier_model_name = 'albert-base-v2'
                 self.attention_model_type = 'essential'
-                self.transformer_name = 'roberta'
+                self.transformer_name = 'albert'
                 self.evaluate_during_training = False
                 self.cutoff = 50
                 self.epochs = 3
@@ -594,7 +598,7 @@ def main():
                 self.do_train = True
                 self.use_gpu = False
                 self.overwrite_output_dir = True
-                self.overwrite_cache_dir = True
+                self.overwrite_cache_dir = False
                 self.clear_output_dir = False
                 self.seed = 1234
                 self.max_length = 256
