@@ -115,7 +115,7 @@ def main():
 
         with codecs.open(output_filename, write_flag) as handle:
             for sentence in all_valid_sentences:
-                handle.write(sentence)
+                handle.write('{}\n'.format(sentence))
 
         num_all_sentences += len(all_valid_sentences)
 
