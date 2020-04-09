@@ -1,8 +1,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from utils_embedding_model import ArcFeature
 from transformers import (BertForMultipleChoice, RobertaForMultipleChoice, XLMRobertaForMultipleChoice,
                           BertConfig, RobertaConfig, XLMRobertaConfig, AlbertPreTrainedModel, AlbertConfig,
                           AlbertModel)
@@ -40,7 +38,91 @@ class ClassifierConfig(PretrainedConfig):
         return cls(**kwargs)
 
 
-class ClassifierNet(torch.nn.Module):
+class GeneralModelForMultipleChoice(nn.Module):
+    def __init__(self, model):
+        super(GeneralModelForMultipleChoice, self).__init__()
+
+        self.model = model
+        self.discriminator = nn.Sequential(nn.BatchNorm1d(self.model.config.hidden_size),
+                                           nn.ReLU(inplace=True),
+                                           nn.Linear(self.model.config.hidden_size, 1),
+                                           nn.Tanh())
+
+        self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
+        self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
+
+    @staticmethod
+    def Wloss(preds, labels):
+        return torch.mean(preds * labels)
+
+    def save_pretrained(self, save_directory):
+        return self.model.save_pretrained(save_directory)
+
+    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels,
+                sentences_type, **kwargs):
+        batch_size = input_ids.shape[0]
+
+        if 'inputs_embeds' in kwargs:
+            embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(device)
+            inputs_embeds = kwargs['inputs_embeds']
+            assert inputs_embeds.is_sparse
+            temp_inputs_embeds = torch.sparse.mm(inputs_embeds, embeddings)
+            temp_inputs_embeds = temp_inputs_embeds.view(*input_ids.shape, -1)
+
+            outputs = self.model(token_type_ids=token_type_ids,
+                                  attention_mask=attention_mask,
+                                  inputs_embeds=temp_inputs_embeds)
+        else:
+            outputs = self.model(input_ids=input_ids,
+                                  token_type_ids=token_type_ids,
+                                  attention_mask=attention_mask)
+
+        last_cls_hidden_state = outputs[1][0][:, 0, :].squeeze().view(batch_size * 4, -1)
+        discriminator_scores = self.discriminator(last_cls_hidden_state)
+        # discriminator_scores = F.softmax(discriminator_scores.squeeze(), dim=1)
+
+        classification_scores = outputs[0]
+        # classification_scores = F.softmax(classification_scores, dim=1)
+
+        scores = (classification_scores, discriminator_scores)
+
+        if discriminator_labels is not None:
+
+            # assert xd.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(xd.shape,
+            #                                                                                                                       discriminator_labels.shape)
+
+            discriminator_loss = self.Wloss(discriminator_scores,
+                                            discriminator_labels.view(*discriminator_scores.shape))
+
+            if classification_labels is not None and not torch.all(
+                    torch.eq(torch.zeros_like(sentences_type), sentences_type)):
+
+                assert classification_scores.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(
+                    classification_scores.shape,
+                    classification_labels.shape)
+                classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(classification_scores,
+                                                                             classification_labels)
+
+                sentences_type_multiplier = sentences_type.unsqueeze(1) * torch.ones_like(classification_loss_noreduc)
+
+                assert classification_loss_noreduc.shape == sentences_type_multiplier.shape, 'classification loss shape ({}) is not the same as sentences_type shape ({})'.format(
+                    classification_loss_noreduc.shape,
+                    sentences_type.shape)
+
+                classification_loss = torch.sum(classification_loss_noreduc * sentences_type_multiplier) / (
+                    torch.sum(sentences_type_multiplier))
+
+            else:
+                classification_loss = None
+
+            loss = (classification_loss, discriminator_loss)
+        else:
+            loss = (None, None)
+
+        return scores, loss
+
+
+class ClassifierNet(nn.Module):
 
     def __init__(self, config):
         super(ClassifierNet, self).__init__()
@@ -61,13 +143,12 @@ class ClassifierNet(torch.nn.Module):
 
         self.gru = nn.GRU(config.embedding_dimension, self.hidden_dim, batch_first=True, num_layers=2, dropout=0.1)
 
-        # self.gru1 = nn.GRUCell(config.embedding_dimension, self.hidden_dim)
-        # self.gru2 = nn.GRUCell(self.hidden_dim, self.hidden_dim)
-        #
-        # self.gru_cells = [self.gru1, self.gru2]
-
         self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
         self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
+
+    @staticmethod
+    def Wloss(preds, labels):
+        return torch.mean(preds*labels)
 
     @classmethod
     def from_pretrained(cls, **kwargs):
@@ -147,7 +228,7 @@ class ClassifierNet(torch.nn.Module):
             # assert xd.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(xd.shape,
             #                                                                                                                       discriminator_labels.shape)
 
-            discriminator_loss = self.BCEWithLogitsLoss_reduc(xd, discriminator_labels.view(*xd.shape))
+            discriminator_loss = self.Wloss(xd, discriminator_labels.view(*xd.shape))
 
             if classification_labels is not None and not torch.all(torch.eq(torch.zeros_like(sentences_type), sentences_type)):
 
@@ -174,8 +255,8 @@ class ClassifierNet(torch.nn.Module):
 
 def flip_labels(classification_labels, discriminator_labels, **kwargs):
 
-    out_c_labels = torch.ones(*classification_labels.shape).to(device) - classification_labels
-    out_d_labels = torch.ones(*discriminator_labels.shape).to(device) - discriminator_labels
+    out_c_labels = torch.ones_like(classification_labels).to(device) - classification_labels
+    out_d_labels = -1*torch.ones_like(discriminator_labels).to(device)
 
     out_dict = {k: v for k, v in kwargs.items()}
     out_dict['classification_labels'] = out_c_labels
@@ -186,7 +267,7 @@ def flip_labels(classification_labels, discriminator_labels, **kwargs):
 
 class AlbertForMultipleChoice(AlbertPreTrainedModel):
     def __init__(self, config):
-        super().__init__(config)
+        super(AlbertForMultipleChoice, self).__init__(config)
 
         self.albert = AlbertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -241,113 +322,28 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
         return outputs  # (loss), reshaped_logits, (hidden_states), (attentions)
 
 
-class MyAlbertForMultipleChoice(nn.Module):
+class MyAlbertForMultipleChoice(GeneralModelForMultipleChoice):
     def __init__(self, pretrained_model_name_or_path, config):
-        super(MyAlbertForMultipleChoice, self).__init__()
-        self.albert = AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config)
-
-        self.discriminator = nn.Sequential(nn.BatchNorm1d(self.albert.config.hidden_size),
-                                           nn.ReLU(inplace=True),
-                                           nn.Linear(self.albert.config.hidden_size, 1))
-
-        self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
-        self.BCEWithLogitsLoss_reduc = nn.BCEWithLogitsLoss(reduction='mean')
+        super(MyAlbertForMultipleChoice, self).__init__(model=AlbertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
 
-    def save_pretrained(self, save_directory):
-        return self.albert.save_pretrained(save_directory)
 
-    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
-        batch_size = input_ids.shape[0]
-
-        if 'inputs_embeds' in kwargs:
-            embeddings = self.albert.albert.embeddings.word_embeddings.weight.to(device)
-            inputs_embeds = kwargs['inputs_embeds']
-            assert inputs_embeds.is_sparse
-            temp_inputs_embeds = torch.sparse.mm(inputs_embeds, embeddings)
-            temp_inputs_embeds = temp_inputs_embeds.view(*input_ids.shape, -1)
-
-            outputs = self.albert(token_type_ids=token_type_ids,
-                                  attention_mask=attention_mask,
-                                  inputs_embeds=temp_inputs_embeds)
-        else:
-            outputs = self.albert(input_ids=input_ids,
-                                  token_type_ids=token_type_ids,
-                                  attention_mask=attention_mask)
-
-        last_cls_hidden_state = outputs[1][0][:, 0, :].squeeze().view(batch_size * 4, -1)
-        discriminator_scores = self.discriminator(last_cls_hidden_state)
-        # discriminator_scores = F.softmax(discriminator_scores.squeeze(), dim=1)
-
-        classification_scores = outputs[0]
-        # classification_scores = F.softmax(classification_scores, dim=1)
-
-        scores = (classification_scores, discriminator_scores)
-
-        if discriminator_labels is not None:
-
-            # assert xd.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(xd.shape,
-            #                                                                                                                       discriminator_labels.shape)
-
-            discriminator_loss = self.BCEWithLogitsLoss_reduc(discriminator_scores, discriminator_labels.view(*discriminator_scores.shape))
-
-            if classification_labels is not None and not torch.all(torch.eq(torch.zeros_like(sentences_type), sentences_type)):
-
-                assert classification_scores.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
-                                                                                                                           classification_labels.shape)
-                classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(classification_scores, classification_labels)
-
-                sentences_type_multiplier = sentences_type.unsqueeze(1)*torch.ones_like(classification_loss_noreduc)
-
-                assert classification_loss_noreduc.shape == sentences_type_multiplier.shape, 'classification loss shape ({}) is not the same as sentences_type shape ({})'.format(classification_loss_noreduc.shape,
-                                                                                                                                                                                  sentences_type.shape)
-
-                classification_loss = torch.sum(classification_loss_noreduc*sentences_type_multiplier)/(torch.sum(sentences_type_multiplier))
-
-            else:
-                classification_loss = None
-
-            loss = (classification_loss, discriminator_loss)
-        else:
-            loss = (None, None)
-
-        return scores, loss
-
-class MyBertForMultipleChoice(nn.Module):
+class MyRobertForMultipleChoice(GeneralModelForMultipleChoice):
     def __init__(self, pretrained_model_name_or_path, config):
-        super(MyBertForMultipleChoice, self).__init__()
-        self.bert = BertForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config)
-
-        self.BCEWithLogitsLoss = nn.BCEWithLogitsLoss()
+        super(MyRobertForMultipleChoice, self).__init__(model=RobertaForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
-
-    def forward(self, input_ids, attention_mask, token_type_ids, labels, **kwargs):
-
-        outputs = self.bert(input_ids=input_ids.long(),
-                              token_type_ids=token_type_ids,
-                              attention_mask=attention_mask)
-        classification_scores = outputs[0]
-
-        if labels is not None:
-
-            assert classification_scores.shape == labels.shape, 'classification shape is {} and labels shape is {}'.format(classification_scores.shape,
-                                                                                                                           labels.shape)
-            loss = self.BCEWithLogitsLoss(classification_scores, labels)
-            return classification_scores, loss
-
-        return classification_scores, None
 
 
 classifier_models_and_config_classes = {
     'linear': (ClassifierConfig, ClassifierNet),
-    'bert': (BertConfig, MyBertForMultipleChoice),
-    'roberta': (RobertaConfig, RobertaForMultipleChoice),
+    'bert': (BertConfig, BertForMultipleChoice),
+    'roberta': (RobertaConfig, MyRobertForMultipleChoice),
     'xlmroberta': (XLMRobertaConfig, XLMRobertaForMultipleChoice),
     'albert': (AlbertConfig, MyAlbertForMultipleChoice),
 }

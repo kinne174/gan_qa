@@ -24,7 +24,7 @@ device = get_device()
 # from https://github.com/bentrevett/pytorch-seq2seq/blob/master/1%20-%20Sequence%20to%20Sequence%20Learning%20with%20Neural%20Networks.ipynb
 class Encoder(nn.Module):
     def __init__(self, input_dim, emb_dim, hid_dim, n_layers, dropout):
-        super().__init__()
+        super(Encoder, self).__init__()
 
         self.hid_dim = hid_dim
         self.n_layers = n_layers
@@ -55,7 +55,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, output_dim, emb_dim, hid_dim, n_layers, dropout):
-        super().__init__()
+        super(Decoder, self).__init__()
 
         self.output_dim = output_dim
         self.hid_dim = hid_dim
@@ -131,7 +131,7 @@ def gumbel_softmax(logits, temperature=0.5, hard=False):
 
 class Seq2Seq(nn.Module):
     def __init__(self, config):
-        super().__init__()
+        super(Seq2Seq, self).__init__()
 
         self.encoder = config.encoder
         self.decoder = config.decoder
@@ -234,17 +234,12 @@ class GeneratorConfig(PretrainedConfig):
         return cls(**kwargs)
 
 
-class MyAlbertForMaskedLM(nn.Module):
-    def __init__(self, pretrained_model_name_or_path, config):
-        super(MyAlbertForMaskedLM, self).__init__()
-        self.albert = AlbertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
-
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, config):
-        return cls(pretrained_model_name_or_path, config)
+class GeneralModelforMaskedLM(nn.Module):
+    def __init__(self):
+        super(GeneralModelforMaskedLM, self).__init__()
 
     def save_pretrained(self, save_directory):
-        self.albert.save_pretrained(save_directory)
+        self.model.save_pretrained(save_directory)
 
     def forward(self, input_ids, my_attention_mask, attention_mask, token_type_ids, **kwargs):
 
@@ -260,12 +255,11 @@ class MyAlbertForMaskedLM(nn.Module):
 
         assert temp_input_ids.dtype == torch.long
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
-        albert_outputs = self.albert(input_ids=temp_input_ids,
+        model_outputs = self.model(input_ids=temp_input_ids,
                                       attention_mask=temp_attention_mask,
                                       token_type_ids=temp_token_type_ids)
-        # albert_outputs = [torch.rand((4*batch_size, max_len, 30000)).to(device)]
 
-        prediction_scores = albert_outputs[0]
+        prediction_scores = model_outputs[0]
         vocab_size = prediction_scores.shape[-1]
 
         # tensor to store decoder outputs [max attention masks, batch size, vocab size]
@@ -299,7 +293,7 @@ class MyAlbertForMaskedLM(nn.Module):
 
         # change to dimension [4*batch size*max length, vocab size] to make multiplying by embeddings in classifier easier
         onehots = onehots.view(-1, onehots.shape[-1])
-        # change to sparse for memory saveage...?? not sure if that actually helps
+        # change to sparse for memory savings...?? not sure if that actually helps
         onehots = onehots.to_sparse()
 
         # should output a tensor of dimension [batch size, 4, max length, vocab size] with one hot vectos along the fourth dimension
@@ -314,10 +308,30 @@ class MyAlbertForMaskedLM(nn.Module):
         return out_dict
 
 
+class MyAlbertForMaskedLM(GeneralModelforMaskedLM):
+    def __init__(self, pretrained_model_name_or_path, config):
+        super(MyAlbertForMaskedLM, self).__init__()
+        self.model = AlbertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
+
+
+class MyRobertaForMaskedLM(GeneralModelforMaskedLM):
+    def __init__(self, pretrained_model_name_or_path, config):
+        super(MyRobertaForMaskedLM, self).__init__()
+        self.model = RobertaForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
+
+
 generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
     'bert': (BertConfig, BertForMaskedLM),
-    'roberta': (RobertaConfig, RobertaForMaskedLM),
+    'roberta': (RobertaConfig, MyRobertaForMaskedLM),
     'distilbert': (DistilBertConfig, DistilBertForMaskedLM),
     'albert': (AlbertConfig, MyAlbertForMaskedLM)
 }
