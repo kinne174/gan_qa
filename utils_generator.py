@@ -93,21 +93,21 @@ class Decoder(nn.Module):
         return prediction, hidden, cell
 
 # from https://discuss.pytorch.org/t/vae-gumbel-softmax/16838
-def sample_gumbel(shape, eps=1e-20):
-    U = torch.Tensor(shape).uniform_(0, 1).to(self.device)
+def sample_gumbel(shape, device, eps=1e-20):
+    U = torch.Tensor(shape).uniform_(0, 1).to(device)
     # logger.info('Generator device is {}'.format(device))
     return -(torch.log(-torch.log(U + eps) + eps))
 
-def gumbel_softmax_sample(logits, temperature):
-    y = logits + sample_gumbel(logits.size())
+def gumbel_softmax_sample(logits, device, temperature):
+    y = logits + sample_gumbel(logits.size(), device)
     return F.softmax(y / temperature, dim=-1)
 
-def gumbel_softmax(logits, temperature=0.5, hard=False):
+def gumbel_softmax(logits, device, temperature=0.5, hard=False):
     """
     input: [*, n_class]
     return: [*, n_class] an one-hot vector
     """
-    y = gumbel_softmax_sample(logits, temperature)
+    y = gumbel_softmax_sample(logits, device, temperature)
     if hard:
         shape = y.size()
         _, ind = y.max(dim=-1)
@@ -119,11 +119,13 @@ def gumbel_softmax(logits, temperature=0.5, hard=False):
 
 
 class Seq2Seq(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, device):
         super(Seq2Seq, self).__init__()
 
         self.encoder = config.encoder
         self.decoder = config.decoder
+
+        self.device = device
 
         assert self.encoder.hid_dim == self.decoder.hid_dim, \
             "Hidden dimensions of encoder and decoder must be equal!"
@@ -131,8 +133,8 @@ class Seq2Seq(nn.Module):
             "Encoder and decoder must have equal number of layers!"
 
     @classmethod
-    def from_pretrained(cls, config):
-        return cls(config)
+    def from_pretrained(cls, config, device):
+        return cls(config, device)
 
     def forward(self, input_ids, my_attention_mask, **kwargs):
 
@@ -173,7 +175,7 @@ class Seq2Seq(nn.Module):
             input = temp_input_ids[t, :]
 
         # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
-        gs = gumbel_softmax(outputs, hard=True)
+        gs = gumbel_softmax(outputs, self.device, hard=True)
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
@@ -235,7 +237,6 @@ class GeneralModelforMaskedLM(nn.Module):
         # change from dimension [batch size, 4, max length] to [4*batch size, max length]
         temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
         temp_attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-        temp_token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
         temp_my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])  # [batch size, max len]
 
         batch_size = temp_input_ids.shape[0]  # this should be 4*batch size
@@ -246,7 +247,7 @@ class GeneralModelforMaskedLM(nn.Module):
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
         model_outputs = self.model(input_ids=temp_input_ids,
                                       attention_mask=temp_attention_mask,
-                                      token_type_ids=temp_token_type_ids)
+                                      token_type_ids=token_type_ids.view(-1, token_type_ids.shape[-1]) if token_type_ids is not None else None)
 
         prediction_scores = model_outputs[0]
         vocab_size = prediction_scores.shape[-1]
@@ -264,7 +265,7 @@ class GeneralModelforMaskedLM(nn.Module):
                     outputs[i, j, :] = prediction_scores[j, t, :]
 
         # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
-        gs = gumbel_softmax(outputs, hard=True)
+        gs = gumbel_softmax(outputs, self.device, hard=True)
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
