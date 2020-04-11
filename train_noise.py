@@ -319,10 +319,10 @@ def load_model(args):
     embedding_matrix_save_file = 'saved/train_noise/embedding_matrix.py'
     if os.path.exists(embedding_matrix_save_file):
         with open(embedding_matrix_save_file, 'rb') as ef:
-            embedding_matrix = torch.load(ef, map_location=torch.device('cpu') if getpass.getuser() == 'Mitch' else None)
+            embedding_matrix = torch.load(ef, map_location=None)
 
     model = LSTM2MLP(embedding_matrix=embedding_matrix, args=args)
-    model.load_state_dict(torch.load(model_filename[0], map_location=torch.device('cpu') if getpass.getuser() == 'Mitch' else None))
+    model.load_state_dict(torch.load(model_filename[0], map_location=None))
     model.eval()
 
     word_to_idx_save_file = 'saved/train_noise/word_to_idx.py'
