@@ -40,7 +40,7 @@ class GeneralModelForMultipleChoice(nn.Module):
 
     @staticmethod
     def Wloss(preds, labels):
-        return torch.mean(preds * labels)
+        return -1*torch.mean(preds * labels)
 
     def save_pretrained(self, save_directory):
         return self.model.save_pretrained(save_directory)
