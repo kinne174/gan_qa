@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import logging
 import os
-from string import punctuation
 
 # logging
 logger = logging.getLogger(__name__)
@@ -10,14 +9,26 @@ logger = logging.getLogger(__name__)
 sigmoid = nn.Sigmoid()
 
 
-def translate_tokens(tokens):
+def translate_tokens(args, tokens):
 
-    current_tokens = []
-    for token in tokens:
-        if '▁' not in token:  # don't know what this character is, had to copy paste from debugger
-            current_tokens.append(token)
-        else:
-            current_tokens.append(token[1:])
+    if args.transformer_name == 'roberta':
+        current_tokens = []
+        for token in tokens:
+            if 'Ġ' not in token:
+                current_tokens.append(token)
+            else:
+                current_tokens.append(token[1:])
+
+    elif args.transformer_name == 'albert':
+        current_tokens = []
+        for token in tokens:
+            if '▁' not in token:  # don't know what this character is, had to copy paste from debugger
+                current_tokens.append(token)
+            else:
+                current_tokens.append(token[1:])
+
+    else:
+        return NotImplementedError
 
     return current_tokens
 
@@ -28,7 +39,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
     # for each answer print the windowed true and fake context and attention scores
     # can try to translate but not necessary on first pass
 
-    if not args.transformer_name == 'albert':
+    if not args.transformer_name in ['albert']:
         raise NotImplementedError
 
     assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])
@@ -66,6 +77,8 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
         all_fake_words = []
         for j in range(4):
             seq_end_index = inputs['token_type_ids'][i, j, :].tolist().index(1)
+            if args.transformer_name == 'roberta':
+                seq_end_index = inputs['token_type_ids'][i, j, 1:].tolist().index(1) + 1
 
             answer_ids = inputs['input_ids'][i, j, change_index:seq_end_index]
             answer_words = tokenizer.convert_ids_to_tokens(answer_ids)
@@ -130,15 +143,15 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
             af.write('Predicted real answer: #r. Correct real answer: *r.\n')
             af.write('Predicted fake wrong answer: #f. Coreect fake wrong answer: *f.\n\n')
 
-            question_words = translate_tokens(question_words)
+            question_words = translate_tokens(args, question_words)
             af.write('** {}\n'.format(' '.join(question_words)))
 
             for (rw, fw, rpl, crl, fpl, cfl, rss, fss, aw, al) in answer_features:
-                aw = translate_tokens(aw)
+                aw = translate_tokens(args, aw)
                 af.write('{} {} {} {} {} {} {}{}\n'.format(crl, rpl, rss, cfl, fpl, fss, al, ' '.join(aw)))
 
-                rw = translate_tokens(rw)
-                fw = translate_tokens(fw)
+                rw = translate_tokens(args, rw)
+                fw = translate_tokens(args, fw)
 
                 af.write('Real context: {}\n'.format(' '.join(rw)))
                 af.write('Fake context: {}\n\n'.format(' '.join(fw)))
@@ -149,7 +162,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
 
 
 def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions):
-    if not args.transformer_name == 'albert':
+    if not args.transformer_name in ['albert', 'roberta']:
         raise NotImplementedError
 
     assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])
@@ -166,10 +179,9 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
     batch_size = inputs['input_ids'].shape[0]
 
     for i in range(batch_size):
-        all_real_words = []
-        all_fake_words = []
+
         for j in range(4):
-            seq_end_index = inputs['token_type_ids'][i, j, :].tolist().index(1)
+            # seq_end_index = inputs['token_type_ids'][i, j, :].tolist().index(1)
 
             attention_list = inputs['attention_mask'][i, j, :].tolist()
             if 0 in attention_list:
@@ -177,15 +189,15 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
             else:
                 pad_index = len(attention_list) - 1
 
-            real_ids = inputs['input_ids'][i, j, seq_end_index:pad_index]
+            real_ids = inputs['input_ids'][i, j, :pad_index]
             fake_ids = fake_inputs['inputs_embeds']._indices()
             fake_ids = fake_ids[1, :].view(*fake_inputs['input_ids'].shape)
-            fake_ids = fake_ids[i, j, seq_end_index:pad_index].long()
+            fake_ids = fake_ids[i, j, :pad_index].long()
 
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
             fake_words = tokenizer.convert_ids_to_tokens(fake_ids)
 
-            my_attention_mask = fake_inputs['my_attention_mask'][i, j, seq_end_index:pad_index].tolist()
+            my_attention_mask = fake_inputs['my_attention_mask'][i, j, :pad_index].tolist()
 
             assert len(real_words) == len(fake_words) == len(
                 my_attention_mask), 'Len of real_words ({}), len of fake_words ({}) and len of my_attention_mask ({}) does not match'.format(
@@ -206,25 +218,19 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
                     new_fake_words.append(fake_words[k])
                     new_real_words.append(real_words[k])
 
-            all_fake_words.append(new_fake_words)
-            all_real_words.append(new_real_words)
 
-            real_softmaxed_scores = [round(ss, 3) for ss in sigmoid(real_predictions[i, :]).squeeze().tolist()]
-            fake_softmaxed_scores = [round(ss, 3) for ss in sigmoid(fake_predictions[i, :]).squeeze().tolist()]
-
-            assert len(all_real_words) == len(all_fake_words) == len(real_softmaxed_scores) == len(fake_softmaxed_scores)
-            out_features = list(map(tuple, zip(all_real_words, all_fake_words, real_softmaxed_scores, fake_softmaxed_scores)))
+            real_softmaxed_score = round(real_predictions[4*i+j, :].item(), 3)
+            fake_softmaxed_score = round(fake_predictions[4*i+j, :].item(), 3)
 
             with open(ablation_filename, write_append_trigger) as af:
-                for (rw, fw, rss, fss) in out_features:
-                    aw = translate_tokens(aw)
-                    af.write('Real score: {}, Fake score: {}\n'.format(rss, fss))
 
-                    rw = translate_tokens(rw)
-                    fw = translate_tokens(fw)
+                af.write('Real score: {}, Fake score: {}\n'.format(real_softmaxed_score, fake_softmaxed_score))
 
-                    af.write('Real words: {}\n'.format(' '.join(rw)))
-                    af.write('Fake words: {}\n\n'.format(' '.join(fw)))
+                rw = translate_tokens(args, new_real_words)
+                fw = translate_tokens(args, new_fake_words)
+
+                af.write('Real words: {}\n'.format(' '.join(rw)))
+                af.write('Fake words: {}\n\n'.format(' '.join(fw)))
 
                 af.write('\n')
 
