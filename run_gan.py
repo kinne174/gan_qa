@@ -69,7 +69,7 @@ def detach_inputs(fake_inputs, inputs):
 # return if there is a gpu available
 def get_device():
     if torch.cuda.is_available():
-        return torch.device('cuda:0')
+        return torch.device('cuda:5')
     else:
         return torch.device('cpu')
 
@@ -198,14 +198,14 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 fake_inputs = attentionM(**inputs)
 
                 # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
-                fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+                fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
                 fake_inputs = generatorM(**fake_inputs)
 
                 # flip labels to represent the wrong answers are actually right
                 fake_inputs = flip_labels(**fake_inputs)
 
                 # get the predictions of which answers are the correct pairing from the classifier
-                fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+                fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
                 predictions_g, (errorG_c, errorG_d) = classifierM(**fake_inputs)
 
                 if all((errorG_c, errorG_d)) is None:
@@ -585,12 +585,12 @@ def main():
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'roberta-base'
                 self.generator_model_type = 'roberta'
-                self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/checkpoint-4200/'
+                self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/moon_roberta-base/'
                 self.classifier_model_type = 'roberta'
-                self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/checkpoint-2600/'
+                self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/saved/roberta-base/'
                 self.attention_model_type = 'essential'
                 self.transformer_name = 'roberta'
-                self.evaluate_during_training = False
+                self.evaluate_during_training = True
                 self.cutoff = None
                 self.epochs = 3
                 self.learning_rate_classifier = 1e-4
@@ -606,16 +606,16 @@ def main():
                 self.clear_output_dir = False
                 self.seed = 1234
                 self.max_length = 256
-                self.batch_size = 4
+                self.batch_size = 3
                 self.do_lower_case = True
-                self.save_steps = 200
+                self.save_steps = 5
                 self.attention_window_size = 10
                 self.max_attention_words = 3
                 self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.05
-                self.use_corpus = True
+                self.use_corpus = False
                 self.evaluate_all_models = False
-                self.do_ablation = False
+                self.do_ablation = True
                 self.domain_words = ['moon', 'earth']
                 self.minibatch_size = 8
                 self.classifier_hidden_dim = 100
