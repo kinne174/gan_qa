@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import (BertPreTrainedModel, RobertaConfig, AlbertPreTrainedModel, AlbertConfig, AlbertModel, RobertaModel)
+from transformers import (BertPreTrainedModel, RobertaConfig, AlbertPreTrainedModel, AlbertConfig, AlbertModel, RobertaModel, ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP)
 from transformers import PretrainedConfig
 import logging
 import os
@@ -262,10 +262,11 @@ def flip_labels(classification_labels, discriminator_labels, **kwargs):
 
 class RobertaForMultipleChoice(BertPreTrainedModel):
     config_class = RobertaConfig
+    pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
     def __init__(self, config):
-        super().__init__(config)
+        super(RobertaForMultipleChoice, self).__init__(config)
 
         self.roberta = RobertaModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
