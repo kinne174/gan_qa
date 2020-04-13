@@ -39,7 +39,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
     # for each answer print the windowed true and fake context and attention scores
     # can try to translate but not necessary on first pass
 
-    if not args.transformer_name in ['albert']:
+    if not args.transformer_name in ['albert', 'roberta']:
         raise NotImplementedError
 
     assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])

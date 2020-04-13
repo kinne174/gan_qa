@@ -180,7 +180,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 minibatch = tuple(t.to(args.device) for t in minibatch)
                 inputs = {'input_ids': minibatch[0],
                           'attention_mask': minibatch[1],
-                          'token_type_ids': minibatch[2] if args.transformer_name in ['albert'] else None,
+                          'token_type_ids': minibatch[2],
                           'my_attention_mask': minibatch[3],
                           'classification_labels': minibatch[4],
                           'discriminator_labels': minibatch[5],
@@ -215,7 +215,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # based on the loss function update the parameters within the generator/ attention model
 
                 #errorG_c is classification error, errorG_d is discriminator error
-                if errorG_c is not None:
+                if errorG_c is not None and not args.no_classification_error:
                     errorG_c /= (torch.sum(batch[6]) * args.minibatch_size) # if sentences_type changes then this must change too!
                     errorG_c.backward(retain_graph=True)
 
@@ -249,7 +249,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                     raise Exception('Error_real is None!')
 
                 # error_real_c is classification error, error_real_d is discriminator error
-                if error_real_c is not None:
+                if error_real_c is not None and not args.no_classification_error:
                     error_real_c /= (torch.sum(batch[6]) * args.minibatch_size) # if sentences_type changes then this must change too!
                     error_real_c.backward(retain_graph=True)
 
@@ -262,6 +262,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 if args.do_ablation:
                     ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, predictions_c[1], predictions_g[1])
+                    # evaluate(args, classifierM, generatorM, attentionM, tokenizer, global_step)
 
             minibatch_iterator.close()
 
@@ -423,6 +424,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
 
     for batch_ind, batch in tqdm(enumerate(eval_dataloader), 'Evaluating {} batches of batch size {} from subset {}'.format(num_batches, min(args.batch_size, 100), subset)):
         classifierM.eval()
+        generatorM.eval()
         batch = tuple(t.to(args.device) for t in batch)
 
         with torch.no_grad():
@@ -436,20 +438,21 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
                       }
 
             fake_inputs = attentionM(**inputs)
-            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+            fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
             fake_inputs = generatorM(**fake_inputs)
 
             # flip labels to represent the wrong answers are actually right
             fake_inputs = flip_labels(**fake_inputs)
 
             # get the predictions of which answers are the correct pairing from the classifier
-            fake_inputs = {k: v.to(args.device) for k, v in fake_inputs.items()}
+            fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
             (fake_predictions, _), _ = classifierM(**fake_inputs)
             (real_predictions, _), (real_error, _) = classifierM(**inputs)
 
             real_loss += real_error.mean().item()
 
         if args.do_ablation:# and batch_ind in ablation_indices:
+            # inputs['token_type_ids'] = batch[2]
             assert -1 == ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions)
 
         if all_predictions is None:
@@ -543,6 +546,8 @@ def main():
                             help='While training or evaluating do ablation study')
         parser.add_argument('--evaluate_all_models', action='store_true',
                             help='When evaluating test or dev set, use all relevant checkpoints')
+        parser.add_argument('--no_classification_error', action='store_true',
+                            help='only train discriminator')
 
         parser.add_argument('--epochs', default=3, type=int,
                             help='Number of epochs to run training')
@@ -608,18 +613,19 @@ def main():
                 self.max_length = 256
                 self.batch_size = 3
                 self.do_lower_case = True
-                self.save_steps = 5
+                self.save_steps = 20
                 self.attention_window_size = 10
                 self.max_attention_words = 3
                 self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.05
-                self.use_corpus = False
+                self.use_corpus = True
                 self.evaluate_all_models = False
-                self.do_ablation = True
+                self.do_ablation = False
                 self.domain_words = ['moon', 'earth']
                 self.minibatch_size = 8
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
+                self.no_classification_error = True
 
         args = Args()
 
