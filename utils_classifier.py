@@ -30,9 +30,7 @@ class GeneralModelForMultipleChoice(nn.Module):
         super(GeneralModelForMultipleChoice, self).__init__()
 
         self.model = model
-        self.discriminator = nn.Sequential(nn.BatchNorm1d(self.model.config.hidden_size),
-                                           nn.ReLU(inplace=True),
-                                           nn.Linear(self.model.config.hidden_size, 1),
+        self.discriminator = nn.Sequential(nn.Linear(self.model.config.hidden_size, 1),
                                            nn.Tanh())
 
         self.BCEWithLogitsLoss_noreduc = nn.BCEWithLogitsLoss(reduction='none')
@@ -66,8 +64,11 @@ class GeneralModelForMultipleChoice(nn.Module):
                 raise NotImplementedError
 
             inputs_embeds = kwargs['inputs_embeds']
-            assert inputs_embeds.is_sparse
-            temp_inputs_embeds = torch.sparse.mm(inputs_embeds, embeddings)
+            if inputs_embeds.is_sparse:
+                temp_inputs_embeds = torch.sparse.mm(inputs_embeds, embeddings)
+            else:
+                temp_inputs_embeds = torch.mm(inputs_embeds, embeddings)
+
             temp_inputs_embeds = temp_inputs_embeds.view(*input_ids.shape, -1)
 
             outputs = self.model(token_type_ids=token_type_ids,
