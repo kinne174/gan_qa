@@ -49,6 +49,14 @@ class GeneralModelForMultipleChoice(nn.Module):
                 sentences_type, **kwargs):
         batch_size = input_ids.shape[0]
 
+        if hasattr(self.model, 'roberta'):
+            discriminator_indices = [(token_type_ids[i, j, :] == 1).nonzero()[2].item() for j in range(4) for i in range(batch_size)]
+            token_type_ids = None
+        elif hasattr(self.model, 'albert'):
+            discriminator_indices = [(input_ids[i, j, :] == 3).nonzero()[0].item() for j in range(4) for i in range(batch_size)]
+        else:
+            raise NotImplementedError
+
         if 'inputs_embeds' in kwargs:
             if hasattr(self.model, 'roberta'):
                 embeddings = self.model.roberta.embeddings.word_embeddings.weight.to(self.device)
@@ -70,8 +78,10 @@ class GeneralModelForMultipleChoice(nn.Module):
                                   token_type_ids=token_type_ids,
                                   attention_mask=attention_mask)
 
-        last_cls_hidden_state = outputs[1][0][:, 0, :].squeeze().view(batch_size * 4, -1)
-        discriminator_scores = self.discriminator(last_cls_hidden_state)
+        disc_hidden_state = torch.cat([outputs[1][0][i, j, :] for i, j in enumerate(discriminator_indices)], dim=0).view(batch_size * 4, -1)
+
+
+        discriminator_scores = self.discriminator(disc_hidden_state)
         # discriminator_scores = F.softmax(discriminator_scores.squeeze(), dim=1)
 
         classification_scores = outputs[0]
@@ -143,7 +153,7 @@ class ClassifierNet(nn.Module):
 
     @staticmethod
     def Wloss(preds, labels):
-        return torch.mean(preds*labels)
+        return -1*torch.mean(preds*labels)
 
     @classmethod
     def from_pretrained(cls, **kwargs):

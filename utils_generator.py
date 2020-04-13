@@ -232,7 +232,14 @@ class GeneralModelforMaskedLM(nn.Module):
     def save_pretrained(self, save_directory):
         self.model.save_pretrained(save_directory)
 
-    def forward(self, input_ids, my_attention_mask, attention_mask, token_type_ids, **kwargs):
+    def forward(self, input_ids, my_attention_mask, attention_mask, **kwargs):
+
+        if hasattr(self.model, 'roberta'):
+            token_type_ids = None
+        elif hasattr(self.model, 'albert'):
+            token_type_ids = kwargs['token_type_ids']
+        else:
+            raise NotImplementedError
 
         # change from dimension [batch size, 4, max length] to [4*batch size, max length]
         temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
@@ -292,7 +299,7 @@ class GeneralModelforMaskedLM(nn.Module):
         out_dict['input_ids'] = input_ids
         out_dict['my_attention_mask'] = my_attention_mask
         out_dict['attention_mask'] = attention_mask
-        out_dict['token_type_ids'] = token_type_ids
+        # out_dict['token_type_ids'] = token_type_ids
         out_dict['inputs_embeds'] = onehots
 
         return out_dict
