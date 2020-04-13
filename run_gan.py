@@ -145,7 +145,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size*args.minibatch_size))
 
-        num_training_seen = 0
+        num_discriminator_seen, num_classification_seen = 0, 0
         num_training_correct_real_classifier, num_training_correct_fake_classifier = 0, 0
         num_training_correct_real_discriminator, num_training_correct_fake_discriminator = 0, 0
         for batch_iterate, batch in enumerate(epoch_iterator):
@@ -186,7 +186,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                           'discriminator_labels': minibatch[5],
                           'sentences_type': minibatch[6],
                           }
-                batch_size = inputs['input_ids'].shape[0]
+                mbatch_size = inputs['input_ids'].shape[0]
 
                 # Train generator
                 generatorM.train()
@@ -197,7 +197,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # this changes the 'my_attention_masks' input to highlight which words should be changed
                 fake_inputs = attentionM(**inputs)
 
-                # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier
+                # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier, already dividing by sum in utils_classifier
                 fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
                 fake_inputs = generatorM(**fake_inputs)
 
@@ -215,11 +215,18 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # based on the loss function update the parameters within the generator/ attention model
 
                 #errorG_c is classification error, errorG_d is discriminator error
-                if errorG_c is not None and not args.no_classification_error:
-                    errorG_c /= (torch.sum(batch[6]) * args.minibatch_size) # if sentences_type changes then this must change too!
-                    errorG_c.backward(retain_graph=True)
+                if errorG_c is not None:
+                    num_classification_seen += sum(inputs['sentences_type'])
+                    num_training_correct_fake_classifier += torch.sum(torch.eq(fake_inputs['classfication_labels'], predictions_g[0].round()), dtype=torch.int).detach().cpu()
+
+                    if args.no_classification_error:
+                        errorG_c /= args.minibatch_size # if sentences_type changes then this must change too!
+                        errorG_c.backward(retain_graph=True)
 
                     minibatch_error_generator_c += errorG_c.detach().item()
+
+                num_discriminator_seen += mbatch_size*4
+                num_training_correct_fake_discriminator += torch.sum(torch.eq(fake_inputs['discriminator_labels'].view(-1, 1), predictions_g[1].round()), dtype=torch.int).detach().cpu()
 
                 errorG_d /= args.minibatch_size
                 errorG_d.backward()
@@ -249,11 +256,21 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                     raise Exception('Error_real is None!')
 
                 # error_real_c is classification error, error_real_d is discriminator error
-                if error_real_c is not None and not args.no_classification_error:
-                    error_real_c /= (torch.sum(batch[6]) * args.minibatch_size) # if sentences_type changes then this must change too!
-                    error_real_c.backward(retain_graph=True)
+                if error_real_c is not None:
+
+                    num_classification_seen += sum(inputs['sentences_type'])
+                    num_training_correct_real_classifier += torch.sum(
+                        torch.eq(inputs['classfication_labels'], predictions_c[0].round()),
+                        dtype=torch.int).detach().cpu()
+
+                    if not args.no_classification_error:
+                        error_real_c /= args.minibatch_size # if sentences_type changes then this must change too!, already dividing by sum in utils_classifier
+                        error_real_c.backward(retain_graph=True)
 
                     minibatch_error_classifier_c += error_real_c.detach().item()
+
+                num_discriminator_seen += mbatch_size*4
+                num_training_correct_real_discriminator += torch.sum(torch.eq(inputs['discriminator_labels'].view(-1, 1), predictions_c[1].round()), dtype=torch.int).detach().cpu()
 
                 error_real_d /= args.minibatch_size
                 error_real_d.backward()
@@ -334,10 +351,20 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # num_training_correct_fake_classifier += int(sum(
             #     [inputs['classification_labels'][i, p].item() for i, p in zip(range(inputs['classification_labels'].shape[0]), predictions_fake_classification)]))
             #
-            # logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
-            #     num_training_correct_real_classifier, num_training_seen, round(num_training_correct_real_classifier/float(num_training_seen), 3)))
-            # logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
-            #     num_training_correct_fake_classifier, num_training_seen, round(num_training_correct_fake_classifier/float(num_training_seen), 3)))
+            logger.info(
+                'Running epoch total after batch {}: real classification is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_real_classifier, num_classification_seen // 2,
+                    num_training_correct_real_classifier / float(num_classification_seen // 2)))
+            print(
+                'Running epoch total after batch {}: real classification is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_real_classifier, num_classification_seen // 2,
+                    num_training_correct_real_classifier / float(num_classification_seen // 2)))
+            logger.info('Running epoch total after batch {}: fake classification is {} out of {} for a percentage of {:.3f}'.format(batch_iterate,
+                num_training_correct_fake_classifier, num_classification_seen//2, num_training_correct_fake_classifier/float(num_classification_seen//2)))
+            print('Running epoch total after batch {}: fake classification is {} out of {} for a percentage of {:.3f}'.format(batch_iterate,
+                num_training_correct_fake_classifier, num_classification_seen//2, num_training_correct_fake_classifier/float(num_classification_seen//2)))
 
             # TODO this needs to be fixed to reflect that all the real should be close to 1 and all fake should be close to 0.
             # logging for fake and real discriminator success
@@ -349,10 +376,30 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             # num_training_correct_fake_discriminator += int(sum(
             #     [inputs['discriminator_labels'][i, p].item() for i, p in zip(range(inputs['discriminator_labels'].shape[0]), predictions_fake_discriminator)]))
             #
-            # logger.info('The training total for this epoch real correct is {} out of {} for a percentage of {}'.format(
-            #     num_training_correct_real_discriminator, num_training_seen, round(num_training_correct_real_discriminator/float(num_training_seen), 3)))
-            # logger.info('The training total for this epoch fake correct is {} out of {} for a percentage of {}'.format(
-            #     num_training_correct_fake_discriminator, num_training_seen, round(num_training_correct_fake_discriminator/float(num_training_seen), 3)))
+            logger.info(
+                'Running epoch total after batch {}: real discriminator is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_real_discriminator, num_discriminator_seen // 2,
+                                                             num_training_correct_real_discriminator / float(
+                                                                 num_discriminator_seen)))
+            print(
+                'Running epoch total after batch {}: real discriminator is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_real_discriminator, num_discriminator_seen // 2,
+                                                             num_training_correct_real_discriminator / float(
+                                                                 num_discriminator_seen)))
+            logger.info(
+                'Running epoch total after batch {}: fake discriminator is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_fake_discriminator, num_discriminator_seen // 2,
+                                                             num_training_correct_fake_discriminator / float(
+                                                                 num_discriminator_seen)))
+            print(
+                'Running epoch total after batch {}: fake discriminator is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_fake_discriminator, num_discriminator_seen // 2,
+                                                             num_training_correct_fake_discriminator / float(
+                                                                 num_discriminator_seen)))
 
             # save models in cache dir
             if global_step % args.save_steps == 0 and global_step is not 0:
