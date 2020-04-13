@@ -28,6 +28,9 @@ from utils_ablation import ablation, ablation_discriminator
 # logging
 logger = logging.getLogger(__name__)
 
+# sigmoid
+sigmoid = torch.nn.Sigmoid()
+
 # hugging face transformers default models, can use pretrained ones though too
 TOKENIZER_CLASSES = {
     'bert': BertTokenizer,
@@ -216,17 +219,19 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 #errorG_c is classification error, errorG_d is discriminator error
                 if errorG_c is not None:
-                    num_classification_seen += sum(inputs['sentences_type'])
-                    num_training_correct_fake_classifier += torch.sum(torch.eq(fake_inputs['classfication_labels'], predictions_g[0].round()), dtype=torch.int).detach().cpu()
+                    num_classification_seen += sum(inputs['sentences_type'])*4
+                    num_training_correct_fake_classifier += torch.sum(torch.eq(torch.argmin(fake_inputs['classification_labels'][fake_inputs['sentences_type'].nonzero().squeeze()], dim=1),
+                                                                               torch.argmin(predictions_g[0][fake_inputs['sentences_type'].nonzero().squeeze()], dim=1)),
+                                                                      dtype=torch.int).detach().cpu()
 
                     if args.no_classification_error:
                         errorG_c /= args.minibatch_size # if sentences_type changes then this must change too!
                         errorG_c.backward(retain_graph=True)
 
-                    minibatch_error_generator_c += errorG_c.detach().item()
+                        minibatch_error_generator_c += errorG_c.detach().item()
 
                 num_discriminator_seen += mbatch_size*4
-                num_training_correct_fake_discriminator += torch.sum(torch.eq(fake_inputs['discriminator_labels'].view(-1, 1), predictions_g[1].round()), dtype=torch.int).detach().cpu()
+                num_training_correct_fake_discriminator += torch.sum(torch.eq(fake_inputs['discriminator_labels'].view(-1, 1), predictions_g[1].sign()), dtype=torch.int).detach().cpu()
 
                 errorG_d /= args.minibatch_size
                 errorG_d.backward()
@@ -258,19 +263,20 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # error_real_c is classification error, error_real_d is discriminator error
                 if error_real_c is not None:
 
-                    num_classification_seen += sum(inputs['sentences_type'])
+                    num_classification_seen += sum(inputs['sentences_type'])*4
                     num_training_correct_real_classifier += torch.sum(
-                        torch.eq(inputs['classfication_labels'], predictions_c[0].round()),
-                        dtype=torch.int).detach().cpu()
+                        torch.eq(torch.argmax(inputs['classification_labels'][inputs['sentences_type'].nonzero().squeeze()], dim=1),
+                                 torch.argmax(predictions_c[0][inputs['sentences_type'].nonzero().squeeze()], dim=1)),
+                                 dtype=torch.int).detach().cpu()
 
                     if not args.no_classification_error:
                         error_real_c /= args.minibatch_size # if sentences_type changes then this must change too!, already dividing by sum in utils_classifier
                         error_real_c.backward(retain_graph=True)
 
-                    minibatch_error_classifier_c += error_real_c.detach().item()
+                        minibatch_error_classifier_c += error_real_c.detach().item()
 
-                num_discriminator_seen += mbatch_size*4
-                num_training_correct_real_discriminator += torch.sum(torch.eq(inputs['discriminator_labels'].view(-1, 1), predictions_c[1].round()), dtype=torch.int).detach().cpu()
+                num_discriminator_seen += mbatch_size * 4
+                num_training_correct_real_discriminator += torch.sum(torch.eq(inputs['discriminator_labels'].view(-1, 1), predictions_c[1].sign()), dtype=torch.int).detach().cpu()
 
                 error_real_d /= args.minibatch_size
                 error_real_d.backward()
@@ -640,9 +646,9 @@ def main():
                 self.learning_rate_generator = 1e-4
                 self.epsilon_classifier = 1e-9
                 self.epsilon_generator = 1e-9
-                self.do_evaluate_dev = False
+                self.do_evaluate_dev = True
                 self.do_evaluate_test = False
-                self.do_train = True
+                self.do_train = False
                 self.use_gpu = True
                 self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
@@ -656,7 +662,7 @@ def main():
                 self.max_attention_words = 3
                 self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.05
-                self.use_corpus = True
+                self.use_corpus = False
                 self.evaluate_all_models = False
                 self.do_ablation = False
                 self.domain_words = ['moon', 'earth']
@@ -681,7 +687,7 @@ def main():
         raise Exception('Cache directory does not exist here ({})'.format(args.cache_dir))
     if not os.path.exists(args.data_dir):
         raise Exception('Data directory does not exist here ({})'.format(args.data_dir))
-    if not args.do_train and (args.evaluate_test or args.evaluate_dev) and args.clear_output_dir:
+    if (not args.do_train) and (args.do_evaluate_test or args.do_evaluate_dev) and args.clear_output_dir:
         raise Exception('You are clearing the output directory without training and asking to evaluate on the test and/or dev set!\n'
                         'Fix one of --train, --evaluate_test, --evaluate_dev, or --clear_output_dir')
 
@@ -754,8 +760,17 @@ def main():
     if args.do_evaluate_dev:
         models_checkpoints = load_models(args, tokenizer)
         for (attentionM, generatorM, classifierM), cp in models_checkpoints:
+
+            # move to proper device based on if gpu is available
+            logger.info('Loading evaluation models from checkpoint {} to {}'.format(cp, args.device))
+            generatorM.to(args.device)
+            attentionM.to(args.device)
+            classifierM.to(args.device)
+
             eval_results = evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
             logger.info('The dev accuracy for checkpoint {} is {}, loss is {}'.format(cp, round(eval_results['accuracy'], 3),
+                                                                                       round(eval_results['loss'], 3)))
+            print('The dev accuracy for checkpoint {} is {}, loss is {}'.format(cp, round(eval_results['accuracy'], 3),
                                                                                        round(eval_results['loss'], 3)))
 
     if args.do_evaluate_test:
@@ -768,7 +783,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# TODO train generator first, can lightly train with classifier, majority should be generation though, possibly later can focus on cloze but for now just get generator resutls thta can be written up
-# max length 512 batch size 2
-# max length 256 batch size 5

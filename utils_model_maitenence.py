@@ -138,7 +138,6 @@ def save_models(args, checkpoint, generatorM, classifierM):
 
 def load_models(args, tokenizer):
 
-
     _, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     _, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
     attention_config_class, attention_model_class = attention_models_and_config_classes[args.attention_model_type]
@@ -161,8 +160,11 @@ def load_models(args, tokenizer):
 
         assert len(classifier_folder) == len(generator_folder) == 1
 
-        generatorM = generator_model_class.from_pretrained(generator_folder[0], config={})
-        classifierM = classifier_model_class.from_pretrained(classifier_folder[0], config={})
+        generatorM = generator_model_class.from_pretrained(generator_folder[0], config=generator_folder[0], device=args.device)
+        classifierM = classifier_model_class.from_pretrained(classifier_folder[0], config=classifier_folder[0], device=args.device)
+
+        if not generatorM.model.config.output_hidden_states:
+            generatorM.model.config.output_hidden_states = True
 
         attention_config_dicts = {'PMI': {'tokenizer': tokenizer,
                                           'window_size': args.attention_window_size,
@@ -175,7 +177,8 @@ def load_models(args, tokenizer):
         attention_config = attention_config_class.from_pretrained(**attention_config_dicts[args.attention_model_type])
         attention_model_dicts = {'PMI': {'config': attention_config},
                                  'random': {},
-                                 'essential': {'config': attention_config},
+                                 'essential': {'config': attention_config,
+                                               'device': args.device},
                                  }
         attentionM = attention_model_class.from_pretrained(**attention_model_dicts[args.attention_model_type])
 
