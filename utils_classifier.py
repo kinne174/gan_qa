@@ -183,7 +183,7 @@ class ClassifierNet(nn.Module):
 
         model_to_save = self
 
-        # TODO save dimensions of embedding and hidden
+        # TODO save dimensions of embedding and hidden so loading does not have to match later on the args
 
         # If we save using the predefined names, we can load using `from_pretrained`
         output_model_file = os.path.join(save_directory, 'linear_weights.pt')
