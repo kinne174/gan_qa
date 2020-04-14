@@ -91,8 +91,8 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
                 pad_index = len(attention_list) - 1
 
             real_ids = inputs['input_ids'][i, j, seq_end_index:pad_index]
-            fake_ids = fake_inputs['inputs_embeds']._indices()
-            fake_ids = fake_ids[1, :].view(*fake_inputs['input_ids'].shape)
+            fake_ids = fake_inputs['inputs_embeds'].nonzero()
+            fake_ids = fake_ids[:, 1].view(*fake_inputs['input_ids'].shape)
             fake_ids = fake_ids[i, j, seq_end_index:pad_index].long()
 
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
@@ -141,7 +141,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
 
         with open(ablation_filename, write_append_trigger) as af:
             af.write('Predicted real answer: #r. Correct real answer: *r.\n')
-            af.write('Predicted fake wrong answer: #f. Coreect fake wrong answer: *f.\n\n')
+            af.write('Predicted fake wrong answer: #f. Correct fake wrong answer: *f.\n\n')
 
             question_words = translate_tokens(args, question_words)
             af.write('** {}\n'.format(' '.join(question_words)))
@@ -190,8 +190,8 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
                 pad_index = len(attention_list) - 1
 
             real_ids = inputs['input_ids'][i, j, :pad_index]
-            fake_ids = fake_inputs['inputs_embeds']._indices()
-            fake_ids = fake_ids[1, :].view(*fake_inputs['input_ids'].shape)
+            fake_ids = fake_inputs['inputs_embeds'].nonzero()
+            fake_ids = fake_ids[:, 1].view(*fake_inputs['input_ids'].shape)
             fake_ids = fake_ids[i, j, :pad_index].long()
 
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
