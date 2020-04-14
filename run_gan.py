@@ -94,7 +94,12 @@ def load_and_cache_features(args, tokenizer, subset):
 
     cutoff_str = '' if args.cutoff is None else '_cutoff{}'.format(args.cutoff)
     corpus_str = '_WithCorpus' if (args.use_corpus and subset == 'train') else ''
-    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}{}{}'.format(subset, args.tokenizer_name, args.max_length, cutoff_str, corpus_str))
+    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}{}{}{}'.format(subset,
+                                                                                    args.tokenizer_name,
+                                                                                    args.max_length,
+                                                                                    '-'.join(args.domain_words),
+                                                                                    cutoff_str,
+                                                                                    corpus_str))
     if os.path.exists(cached_features_filename) and not args.overwrite_cache_dir:
         logger.info('Loading features from ({})'.format(cached_features_filename))
         features = load_features(cached_features_filename)
@@ -132,7 +137,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
-    if args.do_ablation:
+    if args.do_ablation_discriminator:
         ablation_dir = os.path.join(args.output_dir, 'ablation_train')
 
         if not os.path.exists(ablation_dir):
@@ -168,7 +173,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
             minibatch_error_classifier_c = 0
             minibatch_error_generator_c = 0
 
-            if args.do_ablation:
+            if args.do_ablation_discriminator:
 
                 ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}_{}.txt'.format(global_step, '-'.format(args.domain_words)))
 
@@ -219,9 +224,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 #errorG_c is classification error, errorG_d is discriminator error
                 if errorG_c is not None:
-                    num_classification_seen += sum(inputs['sentences_type'])*4
-                    num_training_correct_fake_classifier += torch.sum(torch.eq(torch.argmin(fake_inputs['classification_labels'][fake_inputs['sentences_type'].nonzero().squeeze()], dim=1),
-                                                                               torch.argmin(predictions_g[0][fake_inputs['sentences_type'].nonzero().squeeze()], dim=1)),
+                    num_classification_seen += sum(inputs['sentences_type'])
+                    num_training_correct_fake_classifier += torch.sum(torch.eq(torch.argmin(fake_inputs['classification_labels'][fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1),
+                                                                               torch.argmin(predictions_g[0][fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                                                                       dtype=torch.int).detach().cpu()
 
                     if args.no_classification_error:
@@ -263,10 +268,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 # error_real_c is classification error, error_real_d is discriminator error
                 if error_real_c is not None:
 
-                    num_classification_seen += sum(inputs['sentences_type'])*4
+                    num_classification_seen += sum(inputs['sentences_type'])
                     num_training_correct_real_classifier += torch.sum(
-                        torch.eq(torch.argmax(inputs['classification_labels'][inputs['sentences_type'].nonzero().squeeze()], dim=1),
-                                 torch.argmax(predictions_c[0][inputs['sentences_type'].nonzero().squeeze()], dim=1)),
+                        torch.eq(torch.argmax(inputs['classification_labels'][inputs['sentences_type'].nonzero().squeeze()], dim=-1),
+                                 torch.argmax(predictions_c[0][inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                                  dtype=torch.int).detach().cpu()
 
                     if not args.no_classification_error:
@@ -283,7 +288,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 minibatch_error_classifier_d += error_real_d.detach().item()
 
-                if args.do_ablation:
+                if args.do_ablation_discriminator:
                     ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, predictions_c[1], predictions_g[1])
                     # evaluate(args, classifierM, generatorM, attentionM, tokenizer, global_step)
 
@@ -399,7 +404,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                                                                  num_discriminator_seen // 2)))
 
             # save models in cache dir
-            if global_step % args.save_steps == 0 and global_step is not 0:
+            if global_step % args.save_steps == 0 and args.save_steps is not 0 and global_step is not 0:
 
                 assert save_models(args, global_step, generatorM, classifierM) == -1
 
@@ -455,7 +460,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
     num_batches = len(eval_dataloader)
     ablation_indices = random.sample(range(num_batches), num_batches//10)
 
-    if args.do_ablation:
+    if args.do_ablation_classifier:
         ablation_dir = os.path.join(args.output_dir, 'ablation_{}'.format(subset))
 
         if not os.path.exists(ablation_dir):
@@ -493,9 +498,9 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
             (fake_predictions, _), _ = classifierM(**fake_inputs)
             (real_predictions, _), (real_error, _) = classifierM(**inputs)
 
-            real_loss += real_error.mean().item()
+            real_loss += real_error.item()
 
-        if args.do_ablation:# and batch_ind in ablation_indices:
+        if args.do_ablation_classifier:# and batch_ind in ablation_indices:
             # inputs['token_type_ids'] = batch[2]
             assert -1 == ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions)
 
@@ -657,19 +662,20 @@ def main():
                 self.max_length = 256
                 self.batch_size = 3
                 self.do_lower_case = True
-                self.save_steps = 20
+                self.save_steps = 10
                 self.attention_window_size = 10
                 self.max_attention_words = 3
                 self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.05
                 self.use_corpus = False
                 self.evaluate_all_models = False
-                self.do_ablation = False
+                self.do_ablation_classifier = True
+                self.do_ablation_discriminator = False
                 self.domain_words = ['moon', 'earth']
                 self.minibatch_size = 8
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
-                self.no_classification_error = True
+                self.no_classification_error = False
 
         args = Args()
 
