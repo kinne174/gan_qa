@@ -240,6 +240,7 @@ class AttentionEssential(nn.Module):
     def forward(self, **kwargs):
         all_attention_mask = kwargs['my_attention_mask']
         out_attention_mask = torch.empty((all_attention_mask.shape[0], all_attention_mask.shape[1], all_attention_mask.shape[2]//2))
+        all_tokenizer_attention_mask = kwargs['attention_mask']
 
         all_input_ids = kwargs['input_ids']
         out_input_ids = torch.empty(all_input_ids.shape)
@@ -248,12 +249,13 @@ class AttentionEssential(nn.Module):
             for j in range(out_attention_mask.shape[1]):
                 attention_mask = all_attention_mask[k, j, :all_attention_mask.shape[2]//2].squeeze()
                 shared_tokens = all_attention_mask[k, j, all_attention_mask.shape[2]//2:].squeeze()
+                tokenizer_attention_mask = all_tokenizer_attention_mask[k, j, :].squeeze()
 
                 input_ids = all_input_ids[k, j, :]
 
                 non_zero_indices = attention_mask.nonzero().reshape((-1))
 
-                num_to_mask = int((all_attention_mask.shape[2]//2)*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
+                num_to_mask = int(torch.sum(tokenizer_attention_mask)*np.random.normal(loc=self.mu_p, scale=min(0.05, self.mu_p/4), size=None))
 
                 non_zeros = attention_mask[non_zero_indices]
                 prob_vector = non_zeros/torch.sum(non_zeros)
