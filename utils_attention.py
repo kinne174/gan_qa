@@ -248,7 +248,7 @@ class AttentionEssential(nn.Module):
         for k in range(out_attention_mask.shape[0]):
             for j in range(out_attention_mask.shape[1]):
                 attention_mask = all_attention_mask[k, j, :all_attention_mask.shape[2]//2].squeeze()
-                shared_tokens = all_attention_mask[k, j, all_attention_mask.shape[2]//2:].squeeze()
+                shared_tokens = all_attention_mask[k, j, all_attention_mask.shape[2]//2:].squeeze().long()
                 tokenizer_attention_mask = all_tokenizer_attention_mask[k, j, :].squeeze()
 
                 input_ids = all_input_ids[k, j, :]
@@ -275,8 +275,8 @@ class AttentionEssential(nn.Module):
 
 
                 indices_to_mask = weighted_perm[:num_to_mask]
-                shared_tokens_to_mask = [shared_tokens[itm] for itm in indices_to_mask]
-                indices_to_mask = [i for i in range(shared_tokens.shape[0]) if shared_tokens[i] in shared_tokens_to_mask]
+                # shared_tokens_to_mask = [shared_tokens[itm].item() for itm in indices_to_mask]
+                # indices_to_mask = [i for i in range(shared_tokens.shape[0]) if shared_tokens[i] in shared_tokens_to_mask]
 
                 new_input_ids = torch.tensor([self.mask_id if i in indices_to_mask else id for i, id in enumerate(input_ids)], dtype=torch.long).reshape((-1))
 
@@ -295,6 +295,7 @@ class AttentionEssential(nn.Module):
 
         out['my_attention_mask'] = out_attention_mask
         out['input_ids'] = out_input_ids
+        out['discriminator_labels'] = out['discriminator_labels'] - 2*out_attention_mask.to(self.device)
 
         assert all([ki in list(out.keys()) for ki in list(kwargs.keys())])
         assert all([ko in list(kwargs.keys()) for ko in list(out.keys())])
