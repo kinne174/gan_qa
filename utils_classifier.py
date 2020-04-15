@@ -4,6 +4,7 @@ from transformers import (BertPreTrainedModel, RobertaConfig, AlbertPreTrainedMo
 from transformers import PretrainedConfig
 import logging
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +49,9 @@ class GeneralModelForMultipleChoice(nn.Module):
         batch_size = input_ids.shape[0]
 
         if hasattr(self.model, 'roberta'):
-            discriminator_indices = [(token_type_ids[i, j, :] == 1).nonzero()[2].item() for j in range(4) for i in range(batch_size)]
             token_type_ids = None
         elif hasattr(self.model, 'albert'):
-            discriminator_indices = [(input_ids[i, j, :] == 3).nonzero()[0].item() for j in range(4) for i in range(batch_size)]
+            pass
         else:
             raise NotImplementedError
 
@@ -79,49 +79,34 @@ class GeneralModelForMultipleChoice(nn.Module):
                                   token_type_ids=token_type_ids,
                                   attention_mask=attention_mask)
 
-        disc_hidden_state = torch.cat([outputs[1][0][i, j, :] for i, j in enumerate(discriminator_indices)], dim=0).view(batch_size * 4, -1)
-
-
-        discriminator_scores = self.discriminator(disc_hidden_state)
-        # discriminator_scores = F.softmax(discriminator_scores.squeeze(), dim=1)
-
         classification_scores = outputs[0]
         # classification_scores = F.softmax(classification_scores, dim=1)
 
-        scores = (classification_scores, discriminator_scores)
+        scores = classification_scores
 
-        if discriminator_labels is not None:
 
-            # assert xd.shape == discriminator_labels.shape, 'Discriminator shape ({}) is not the same as labels shape ({})'.format(xd.shape,
-            #                                                                                                                       discriminator_labels.shape)
+        if classification_labels is not None and not torch.all(
+                torch.eq(torch.zeros_like(sentences_type), sentences_type)):
 
-            discriminator_loss = self.Wloss(discriminator_scores,
-                                            discriminator_labels.view(*discriminator_scores.shape))
+            assert classification_scores.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(
+                classification_scores.shape,
+                classification_labels.shape)
+            classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(classification_scores,
+                                                                         classification_labels)
 
-            if classification_labels is not None and not torch.all(
-                    torch.eq(torch.zeros_like(sentences_type), sentences_type)):
+            sentences_type_multiplier = sentences_type.unsqueeze(1) * torch.ones_like(classification_loss_noreduc)
 
-                assert classification_scores.shape == classification_labels.shape, 'classification shape is {} and labels shape is {}'.format(
-                    classification_scores.shape,
-                    classification_labels.shape)
-                classification_loss_noreduc = self.BCEWithLogitsLoss_noreduc(classification_scores,
-                                                                             classification_labels)
+            assert classification_loss_noreduc.shape == sentences_type_multiplier.shape, 'classification loss shape ({}) is not the same as sentences_type shape ({})'.format(
+                classification_loss_noreduc.shape,
+                sentences_type.shape)
 
-                sentences_type_multiplier = sentences_type.unsqueeze(1) * torch.ones_like(classification_loss_noreduc)
+            classification_loss = torch.sum(classification_loss_noreduc * sentences_type_multiplier) / (
+                torch.sum(sentences_type_multiplier))
 
-                assert classification_loss_noreduc.shape == sentences_type_multiplier.shape, 'classification loss shape ({}) is not the same as sentences_type shape ({})'.format(
-                    classification_loss_noreduc.shape,
-                    sentences_type.shape)
-
-                classification_loss = torch.sum(classification_loss_noreduc * sentences_type_multiplier) / (
-                    torch.sum(sentences_type_multiplier))
-
-            else:
-                classification_loss = None
-
-            loss = (classification_loss, discriminator_loss)
         else:
-            loss = (None, None)
+            classification_loss = None
+
+        loss = classification_loss
 
         return scores, loss
 
@@ -184,12 +169,15 @@ class ClassifierNet(nn.Module):
 
         model_to_save = self
 
-        # TODO save dimensions of embedding and hidden so loading does not have to match later on the args
-
         # If we save using the predefined names, we can load using `from_pretrained`
         output_model_file = os.path.join(save_directory, 'linear_weights.pt')
         torch.save(model_to_save.state_dict(), output_model_file)
         logger.info("Model weights saved in {}".format(output_model_file))
+
+        assert hasattr(model_to_save, "config")
+        config_filename = 'config.json'
+        with open(config_filename, 'wb') as cf:
+            json.dump(vars(model_to_save.config), cf)
 
     def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
 
@@ -259,14 +247,12 @@ class ClassifierNet(nn.Module):
         return scores, loss
 
 
-def flip_labels(classification_labels, discriminator_labels, **kwargs):
+def flip_labels(classification_labels, **kwargs):
 
     out_c_labels = torch.ones_like(classification_labels) - classification_labels
-    out_d_labels = -1*torch.ones_like(discriminator_labels)
 
     out_dict = {k: v for k, v in kwargs.items()}
     out_dict['classification_labels'] = out_c_labels
-    out_dict['discriminator_labels'] = out_d_labels
 
     return out_dict
 

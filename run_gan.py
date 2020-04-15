@@ -97,7 +97,7 @@ def load_and_cache_features(args, tokenizer, subset):
     cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}{}{}{}'.format(subset,
                                                                                     args.tokenizer_name,
                                                                                     args.max_length,
-                                                                                    '-'.join(args.domain_words),
+                                                                                    '_'+'-'.join(args.domain_words),
                                                                                     cutoff_str,
                                                                                     corpus_str))
     if os.path.exists(cached_features_filename) and not args.overwrite_cache_dir:
@@ -117,7 +117,7 @@ def load_and_cache_features(args, tokenizer, subset):
     all_token_type_mask = torch.tensor(select_field(features, 'token_type_mask'), dtype=torch.long)
     all_attention_mask = torch.tensor(select_field(features, 'attention_mask'), dtype=torch.float)
     all_classification_labels = torch.tensor(label_map([f.classification_label for f in features], num_choices=4), dtype=torch.float)
-    all_discriminator_labels = torch.tensor([f.discriminator_labels for f in features], dtype=torch.float)
+    all_discriminator_labels = torch.tensor(select_field(features, 'input_mask'), dtype=torch.float) # will be replaced by -1s where appropriate
     all_sentences_types = torch.tensor([f.sentences_type for f in features], dtype=torch.long)
 
     dataset = TensorDataset(all_input_ids, all_input_mask, all_token_type_mask, all_attention_mask, all_classification_labels, all_discriminator_labels, all_sentences_types)
@@ -125,7 +125,7 @@ def load_and_cache_features(args, tokenizer, subset):
     return dataset
 
 
-def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
+def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM):
 
     # use pytorch data loaders to cycle through the data
     train_sampler = RandomSampler(dataset, replacement=False)
@@ -134,6 +134,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
     # optimizers
     classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
     generatorO = AdamW(generatorM.parameters(), lr=args.learning_rate_generator, eps=args.epsilon_generator)
+    discriminatorO = AdamW(discriminatorM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
@@ -156,6 +157,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
         num_discriminator_seen, num_classification_seen = 0, 0
         num_training_correct_real_classifier, num_training_correct_fake_classifier = 0, 0
         num_training_correct_real_discriminator, num_training_correct_fake_discriminator = 0, 0
+        num_training_negone_fake_discriminator, num_training_correct_negone_fake_discriminator = 0, 0
+
         for batch_iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, batch_iterate))
 
@@ -214,11 +217,12 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                 # get the predictions of which answers are the correct pairing from the classifier
                 fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
-                predictions_g, (errorG_c, errorG_d) = classifierM(**fake_inputs)
+                predictions_g_c, errorG_c = classifierM(**fake_inputs)
+                predictions_g_d, errorG_d = discriminatorM(**fake_inputs)
 
                 if all((errorG_c, errorG_d)) is None:
-                    logger.warning('ErrorG is None!')
-                    raise Exception('ErrorG is None!')
+                    logger.warning('ErrorG and ErrorC is None!')
+                    raise Exception('ErrorG and ErrorC is None!')
 
                 # based on the loss function update the parameters within the generator/ attention model
 
@@ -226,7 +230,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 if errorG_c is not None:
                     num_classification_seen += sum(inputs['sentences_type'])
                     num_training_correct_fake_classifier += torch.sum(torch.eq(torch.argmin(fake_inputs['classification_labels'][fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1),
-                                                                               torch.argmin(predictions_g[0][fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
+                                                                               torch.argmin(predictions_g_c[fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                                                                       dtype=torch.int).detach().cpu()
 
                     if args.no_classification_error:
@@ -235,8 +239,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                         minibatch_error_generator_c += errorG_c.detach().item()
 
-                num_discriminator_seen += mbatch_size*4
-                num_training_correct_fake_discriminator += torch.sum(torch.eq(fake_inputs['discriminator_labels'].view(-1, 1), predictions_g[1].sign()), dtype=torch.int).detach().cpu()
+                num_discriminator_seen += int(fake_inputs['discriminator_labels'].nonzero().shape[0])
+                num_training_correct_fake_discriminator += int(torch.sum(torch.eq(fake_inputs['discriminator_labels'], predictions_g_d.sign()), dtype=torch.int).detach().cpu())
+                num_training_negone_fake_discriminator += int(torch.sum(torch.eq(fake_inputs['discriminator_labels'], -1*torch.ones_like(fake_inputs['discriminator_labels'])), dtype=torch.int).detach().cpu())
+                num_training_correct_negone_fake_discriminator += int(torch.sum(torch.eq(fake_inputs['discriminator_labels'], predictions_g_d.sign())[fake_inputs['my_attention_mask'].nonzero(as_tuple=True)], dtype=torch.int).detach().cpu())
 
                 errorG_d /= args.minibatch_size
                 errorG_d.backward()
@@ -259,7 +265,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
 
                 # see if the classifier can determine difference between fake and real data
-                predictions_c, (error_real_c, error_real_d) = classifierM(**inputs)
+                predictions_c, error_real_c = classifierM(**inputs)
+                predictions_d, error_real_d = discriminatorM(**inputs)
+
 
                 if all((error_real_c, error_real_d)) is None:
                     logger.warning('Error_real is None!')
@@ -271,7 +279,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                     num_classification_seen += sum(inputs['sentences_type'])
                     num_training_correct_real_classifier += torch.sum(
                         torch.eq(torch.argmax(inputs['classification_labels'][inputs['sentences_type'].nonzero().squeeze()], dim=-1),
-                                 torch.argmax(predictions_c[0][inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
+                                 torch.argmax(predictions_c[inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                                  dtype=torch.int).detach().cpu()
 
                     if not args.no_classification_error:
@@ -280,8 +288,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
                         minibatch_error_classifier_c += error_real_c.detach().item()
 
-                num_discriminator_seen += mbatch_size * 4
-                num_training_correct_real_discriminator += torch.sum(torch.eq(inputs['discriminator_labels'].view(-1, 1), predictions_c[1].sign()), dtype=torch.int).detach().cpu()
+                num_discriminator_seen += int(inputs['discriminator_labels'].nonzero().shape[0])
+                num_training_correct_real_discriminator += int(torch.sum(torch.eq(inputs['discriminator_labels'], predictions_d.sign()), dtype=torch.int).detach().cpu())
 
                 error_real_d /= args.minibatch_size
                 error_real_d.backward()
@@ -289,7 +297,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                 minibatch_error_classifier_d += error_real_d.detach().item()
 
                 if args.do_ablation_discriminator:
-                    ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, predictions_c[1], predictions_g[1])
+                    ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, predictions_c, predictions_g_c)
                     # evaluate(args, classifierM, generatorM, attentionM, tokenizer, global_step)
 
             minibatch_iterator.close()
@@ -346,10 +354,12 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
 
             # update classifier parameters
             classifierO.step()
+            discriminatorO.step()
 
             # zero out gradient of networks
             generatorM.zero_grad()
             classifierM.zero_grad()
+            discriminatorM.zero_grad()
 
             # logging for fake and real classification success
             if num_classification_seen:
@@ -402,6 +412,20 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM):
                     num_training_correct_fake_discriminator, num_discriminator_seen // 2,
                                                              num_training_correct_fake_discriminator / float(
                                                                  num_discriminator_seen // 2)))
+            logger.info(
+                'Running epoch total after batch {}: number of correct negative ones is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_negone_fake_discriminator,
+                    num_training_negone_fake_discriminator,
+                    num_training_correct_negone_fake_discriminator // float(num_training_negone_fake_discriminator)
+                ))
+            print(
+                'Running epoch total after batch {}: number of correct negative ones is {} out of {} for a percentage of {:.3f}'.format(
+                    batch_iterate,
+                    num_training_correct_negone_fake_discriminator,
+                    num_training_negone_fake_discriminator,
+                    num_training_correct_negone_fake_discriminator // float(num_training_negone_fake_discriminator)
+                ))
 
             # save models in cache dir
             if global_step % args.save_steps == 0 and args.save_steps is not 0 and global_step is not 0:
@@ -495,8 +519,8 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
 
             # get the predictions of which answers are the correct pairing from the classifier
             fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
-            (fake_predictions, _), _ = classifierM(**fake_inputs)
-            (real_predictions, _), (real_error, _) = classifierM(**inputs)
+            fake_predictions, _ = classifierM(**fake_inputs)
+            real_predictions, real_error = classifierM(**inputs)
 
             real_loss += real_error.item()
 
@@ -653,7 +677,7 @@ def main():
                 self.epsilon_generator = 1e-9
                 self.do_evaluate_dev = True
                 self.do_evaluate_test = False
-                self.do_train = False
+                self.do_train = True
                 self.use_gpu = True
                 self.overwrite_output_dir = True
                 self.overwrite_cache_dir = False
@@ -663,10 +687,8 @@ def main():
                 self.batch_size = 3
                 self.do_lower_case = True
                 self.save_steps = 10
-                self.attention_window_size = 10
-                self.max_attention_words = 3
                 self.essential_terms_hidden_dim = 512
-                self.essential_mu_p = 0.05
+                self.essential_mu_p = 0.25
                 self.use_corpus = False
                 self.evaluate_all_models = False
                 self.do_ablation_classifier = True
@@ -676,6 +698,13 @@ def main():
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
                 self.no_classification_error = False
+                self.discriminator_model_type = 'lstm'
+                self.discriminator_model_name = None
+                self.discriminator_embedding_type = None
+                self.discriminator_embedding_dim = 100
+                self.discriminator_hidden_dim = 256
+                self.discriminator_num_layers = 2
+                self.discriminator_dropout = 0.10
 
         args = Args()
 
@@ -754,13 +783,13 @@ def main():
 
     if args.do_train:
         # initialize and return models
-        generatorM, attentionM, classifierM = inititalize_models(args, tokenizer)
+        generatorM, attentionM, classifierM, discriminatorM = inititalize_models(args, tokenizer)
 
         # dataset includes: input_ids [n, 4, max_length], input_masks [n, 4, max_length], token_type_masks [n, 4, max_length]
         # attention_masks [n, 4, max_length] and labels [n, 4]
         dataset = load_and_cache_features(args, tokenizer, 'train')
 
-        train(args, tokenizer, dataset, generatorM, attentionM, classifierM)
+        train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM)
 
 
     if args.do_evaluate_dev:

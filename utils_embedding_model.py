@@ -20,11 +20,11 @@ class ArcFeature(object):
             'input_ids': input_ids,
             'input_mask': input_mask,
             'token_type_mask': token_type_mask,
-            'attention_mask': attention_mask
+            'attention_mask': attention_mask,
+            # 'discriminator_labels': attention_mask,
         } for input_ids, input_mask, token_type_mask, attention_mask in choices_features]
         self.sentences_type = sentences_type
         self.classification_label = classification_label
-        self.discriminator_labels = [1]*4
 
 class HuggingfaceTranslators:
     def __init__(self, transformer_name):
