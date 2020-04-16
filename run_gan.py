@@ -147,6 +147,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
     best_dev_acc = 0.0
     global_step = 0
 
+    # do an evaluation first
+    if args.do_prevaluation:
+        evaluate(args, classifierM, generatorM, attentionM, tokenizer, global_step)
+
     logger.info('Starting to train!')
     logger.info('There are {} examples.'.format(len(dataset)))
     logger.info('There will be {} iterations.'.format(len(dataset)//(args.batch_size*args.minibatch_size) + 1))
@@ -158,6 +162,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
         num_training_correct_real_classifier, num_training_correct_fake_classifier = 0, 0
         num_training_correct_real_discriminator, num_training_correct_fake_discriminator = 0, 0
         num_training_negone_fake_discriminator, num_training_correct_negone_fake_discriminator = 0, 0
+        num_training_correct_one_real_discriminator = 0
 
         for batch_iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, batch_iterate))
@@ -233,11 +238,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                                                                                torch.argmin(predictions_g_c[fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                                                                       dtype=torch.int).detach().cpu()
 
-                    if args.no_classification_error:
-                        errorG_c /= args.minibatch_size # if sentences_type changes then this must change too!
-                        errorG_c.backward(retain_graph=True)
+                    errorG_c /= args.minibatch_size # if sentences_type changes then this must change too!
+                    errorG_c.backward(retain_graph=True)
 
-                        minibatch_error_generator_c += errorG_c.detach().item()
+                    minibatch_error_generator_c += errorG_c.detach().item()
 
                 num_discriminator_seen += int(fake_inputs['discriminator_labels'].nonzero().shape[0])
                 num_training_correct_fake_discriminator += int(torch.sum(torch.eq(fake_inputs['discriminator_labels'], predictions_g_d.sign()), dtype=torch.int).detach().cpu())
@@ -264,6 +268,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 # detach the inputs so the gradient graphs don't reach back, only need them for classifier
                 fake_inputs, inputs = detach_inputs(fake_inputs, inputs)
 
+                # give inputs the my_attention_mask to be used in discriminator
+                inputs['my_attention_mask'] = fake_inputs['my_attention_mask']
+
                 # see if the classifier can determine difference between fake and real data
                 predictions_c, error_real_c = classifierM(**inputs)
                 predictions_d, error_real_d = discriminatorM(**inputs)
@@ -282,14 +289,16 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                                  torch.argmax(predictions_c[inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                                  dtype=torch.int).detach().cpu()
 
-                    if not args.no_classification_error:
-                        error_real_c /= args.minibatch_size # if sentences_type changes then this must change too!, already dividing by sum in utils_classifier
-                        error_real_c.backward(retain_graph=True)
+                    error_real_c /= args.minibatch_size # if sentences_type changes then this must change too!, already dividing by sum in utils_classifier
+                    error_real_c.backward(retain_graph=True)
 
-                        minibatch_error_classifier_c += error_real_c.detach().item()
+                    minibatch_error_classifier_c += error_real_c.detach().item()
 
                 num_discriminator_seen += int(inputs['discriminator_labels'].nonzero().shape[0])
                 num_training_correct_real_discriminator += int(torch.sum(torch.eq(inputs['discriminator_labels'], predictions_d.sign()), dtype=torch.int).detach().cpu())
+                num_training_correct_one_real_discriminator += int(torch.sum(
+                    torch.eq(inputs['discriminator_labels'], predictions_d.sign())[
+                        inputs['my_attention_mask'].nonzero(as_tuple=True)], dtype=torch.int).detach().cpu())
 
                 error_real_d /= args.minibatch_size
                 error_real_d.backward()
@@ -352,9 +361,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                                                                                                                   batch_iterate))
                 # raise Exception('There is some zero gradient parameters for the classifier in epoch {} iteration {}!'.format(epoch, iterate))
 
-            # update classifier parameters
-            classifierO.step()
-            discriminatorO.step()
+            # update classifier/discriminator parameters
+            if not args.no_classification_error:
+                classifierO.step()
+            if not args.no_discriminator_error:
+                discriminatorO.step()
 
             # zero out gradient of networks
             generatorM.zero_grad()
@@ -388,49 +399,63 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 print('No classication scores so far after batch {}'.format(batch_iterate))
 
             # logging for fake and real discriminator success
+            # logger.info(
+            #     'Running epoch total after batch {}: real discriminator is {} out of {} for a percentage of {:.3f}'.format(
+            #         batch_iterate,
+            #         num_training_correct_real_discriminator, num_discriminator_seen // 2,
+            #                                                  num_training_correct_real_discriminator / float(
+            #                                                      num_discriminator_seen // 2)))
+            # print(
+            #     'Running epoch total after batch {}: real discriminator is {} out of {} for a percentage of {:.3f}'.format(
+            #         batch_iterate,
+            #         num_training_correct_real_discriminator, num_discriminator_seen // 2,
+            #                                                  num_training_correct_real_discriminator / float(
+            #                                                      num_discriminator_seen // 2)))
+            # logger.info(
+            #     'Running epoch total after batch {}: fake discriminator is {} out of {} for a percentage of {:.3f}'.format(
+            #         batch_iterate,
+            #         num_training_correct_fake_discriminator, num_discriminator_seen // 2,
+            #                                                  num_training_correct_fake_discriminator / float(
+            #                                                      num_discriminator_seen // 2)))
+            # print(
+            #     'Running epoch total after batch {}: fake discriminator is {} out of {} for a percentage of {:.3f}'.format(
+            #         batch_iterate,
+            #         num_training_correct_fake_discriminator, num_discriminator_seen // 2,
+            #                                                  num_training_correct_fake_discriminator / float(
+            #                                                      num_discriminator_seen // 2)))
             logger.info(
-                'Running epoch total after batch {}: real discriminator is {} out of {} for a percentage of {:.3f}'.format(
+                'Running epoch total after batch {}: number of correct ones is {} out of {} for a percentage of {:.3f}'.format(
                     batch_iterate,
-                    num_training_correct_real_discriminator, num_discriminator_seen // 2,
-                                                             num_training_correct_real_discriminator / float(
-                                                                 num_discriminator_seen // 2)))
+                    num_training_correct_one_real_discriminator,
+                    num_training_negone_fake_discriminator,
+                    num_training_correct_one_real_discriminator / float(num_training_negone_fake_discriminator)
+                ))
             print(
-                'Running epoch total after batch {}: real discriminator is {} out of {} for a percentage of {:.3f}'.format(
+                'Running epoch total after batch {}: number of correct ones is {} out of {} for a percentage of {:.3f}'.format(
                     batch_iterate,
-                    num_training_correct_real_discriminator, num_discriminator_seen // 2,
-                                                             num_training_correct_real_discriminator / float(
-                                                                 num_discriminator_seen // 2)))
-            logger.info(
-                'Running epoch total after batch {}: fake discriminator is {} out of {} for a percentage of {:.3f}'.format(
-                    batch_iterate,
-                    num_training_correct_fake_discriminator, num_discriminator_seen // 2,
-                                                             num_training_correct_fake_discriminator / float(
-                                                                 num_discriminator_seen // 2)))
-            print(
-                'Running epoch total after batch {}: fake discriminator is {} out of {} for a percentage of {:.3f}'.format(
-                    batch_iterate,
-                    num_training_correct_fake_discriminator, num_discriminator_seen // 2,
-                                                             num_training_correct_fake_discriminator / float(
-                                                                 num_discriminator_seen // 2)))
+                    num_training_correct_one_real_discriminator,
+                    num_training_negone_fake_discriminator,
+                    num_training_correct_one_real_discriminator / float(num_training_negone_fake_discriminator)
+                ))
             logger.info(
                 'Running epoch total after batch {}: number of correct negative ones is {} out of {} for a percentage of {:.3f}'.format(
                     batch_iterate,
                     num_training_correct_negone_fake_discriminator,
                     num_training_negone_fake_discriminator,
-                    num_training_correct_negone_fake_discriminator // float(num_training_negone_fake_discriminator)
+                    num_training_correct_negone_fake_discriminator / float(num_training_negone_fake_discriminator)
                 ))
             print(
                 'Running epoch total after batch {}: number of correct negative ones is {} out of {} for a percentage of {:.3f}'.format(
                     batch_iterate,
                     num_training_correct_negone_fake_discriminator,
                     num_training_negone_fake_discriminator,
-                    num_training_correct_negone_fake_discriminator // float(num_training_negone_fake_discriminator)
+                    num_training_correct_negone_fake_discriminator / float(num_training_negone_fake_discriminator)
                 ))
 
             # save models in cache dir
             if global_step % args.save_steps == 0 and args.save_steps is not 0 and global_step is not 0:
 
-                assert save_models(args, global_step, generatorM, classifierM) == -1
+                assert save_models(args, global_step, generatorM, classifierM, discriminatorM) == -1
 
                 if args.evaluate_during_training:
 
@@ -452,7 +477,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
     train_iterator.close()
 
     # TODOfixed when out of double for loop save model checkpoints and report best dev results
-    assert save_models(args, global_step, generatorM, classifierM) == -1
+    assert save_models(args, global_step, generatorM, classifierM, discriminatorM) == -1
 
     if args.evaluate_during_training:
         logger.info(
@@ -664,6 +689,7 @@ def main():
                 self.tokenizer_name = 'roberta-base'
                 self.generator_model_type = 'roberta'
                 self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/moon_roberta-base/'
+                # self.generator_model_name = 'roberta-base'
                 self.classifier_model_type = 'roberta'
                 self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/saved/roberta-base/'
                 self.attention_model_type = 'essential'
@@ -684,27 +710,29 @@ def main():
                 self.clear_output_dir = False
                 self.seed = 1234
                 self.max_length = 256
-                self.batch_size = 3
+                self.batch_size = 2
                 self.do_lower_case = True
-                self.save_steps = 10
+                self.save_steps = 15
                 self.essential_terms_hidden_dim = 512
-                self.essential_mu_p = 0.25
-                self.use_corpus = False
+                self.essential_mu_p = 0.35
+                self.use_corpus = True
                 self.evaluate_all_models = False
-                self.do_ablation_classifier = True
+                self.do_ablation_classifier = False
                 self.do_ablation_discriminator = False
                 self.domain_words = ['moon', 'earth']
-                self.minibatch_size = 8
+                self.minibatch_size = 15
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
-                self.no_classification_error = False
+                self.no_classification_error = True
+                self.no_discriminator_error = True
                 self.discriminator_model_type = 'lstm'
-                self.discriminator_model_name = None
+                self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-roberta-moon_earth/roberta-discriminator-300/'
                 self.discriminator_embedding_type = None
                 self.discriminator_embedding_dim = 100
                 self.discriminator_hidden_dim = 256
                 self.discriminator_num_layers = 2
                 self.discriminator_dropout = 0.10
+                self.do_prevaluation = False
 
         args = Args()
 
