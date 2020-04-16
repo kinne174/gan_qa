@@ -101,7 +101,7 @@ def inititalize_models(args, tokenizer):
     return generatorM, attentionM, classifierM, discriminatorM
 
 
-def save_models(args, checkpoint, generatorM, classifierM):
+def save_models(args, checkpoint, generatorM, classifierM, discriminatorM):
     output_dir_generator = os.path.join(args.output_dir, '{}-generator-{}'.format(args.transformer_name, checkpoint))
     if not os.path.exists(output_dir_generator):
         os.makedirs(output_dir_generator)
@@ -121,6 +121,14 @@ def save_models(args, checkpoint, generatorM, classifierM):
         logger.info('Saving classifier model checkpoint to {}'.format(output_dir_classifier))
     else:
         logger.info('Not saving classifier model.')
+
+    output_dir_discriminator = os.path.join(args.output_dir, '{}-discriminator-{}'.format(args.transformer_name, checkpoint))
+    if not os.path.exists(output_dir_discriminator):
+        os.makedirs(output_dir_discriminator)
+    discriminatorM.save_pretrained(output_dir_discriminator)
+    logger.info('Saving discriminator model checkpoint to {}'.format(output_dir_discriminator))
+
+    print('Models saved!')
 
     return -1
 
