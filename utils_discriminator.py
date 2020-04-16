@@ -24,14 +24,14 @@ class DiscriminatorLSTM(nn.Module):
         self.embedding_matrix_init()
 
         self.linear1 = nn.Linear(config.embedding_dim, config.hidden_dim)
-        self.lstm = nn.LSTM(config.hidden_dim, config.hidden_dim, batch_first=True, bidirectional=True,
+        self.lstm = nn.LSTM(config.hidden_dim, config.hidden_dim, batch_first=True, bidirectional=False,
                             num_layers=config.num_layers, dropout=config.dropout)
         self.linear2 = nn.Sequential(nn.Linear(config.hidden_dim, 1),
                                      nn.Tanh())
 
     @staticmethod
-    def Wloss(preds, labels):
-        return -1 * torch.mean(preds * labels)
+    def Wloss(preds, labels, my_attention_mask):
+        return -1 * torch.sum(preds * labels * my_attention_mask) / float(my_attention_mask.nonzero().shape[0])
 
     def embedding_matrix_init(self):
         assert hasattr(self, "config")
@@ -53,8 +53,8 @@ class DiscriminatorLSTM(nn.Module):
         torch.save(model_to_save.state_dict(), output_model_file)
 
         assert hasattr(model_to_save, "config")
-        config_filename = 'config.json'
-        with open(config_filename, 'wb') as cf:
+        config_filename = os.path.join(save_directory, 'config.json')
+        with open(config_filename, 'w') as cf:
             json.dump(vars(model_to_save.config), cf)
 
         logger.info("Model weights and config saved in {}".format(output_model_file))
@@ -64,9 +64,9 @@ class DiscriminatorLSTM(nn.Module):
     def from_pretrained(cls, config, pretrained_model_path):
         if pretrained_model_path is not None and os.path.exists(pretrained_model_path):
             config_filename = os.path.join(pretrained_model_path, 'config.json')
-            with open(config_filename, 'rb') as cf:
+            with open(config_filename, 'r') as cf:
                 config_json = json.load(cf)
-            config = DiscriminatorConfig(config_json)
+            config = DiscriminatorConfig(**config_json)
 
             model_to_return = cls(config)
             model_load_filename = os.path.join(pretrained_model_path, 'linear_weights.pt')
@@ -76,7 +76,7 @@ class DiscriminatorLSTM(nn.Module):
 
         return cls(config)
 
-    def forward(self, input_ids, discriminator_labels, **kwargs):
+    def forward(self, input_ids, discriminator_labels, my_attention_mask, **kwargs):
 
         temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
 
@@ -93,15 +93,17 @@ class DiscriminatorLSTM(nn.Module):
         transformed_word_embeddings = self.linear1(word_embeddings)
 
         lstm_out, (last_hidden, last_cell) = self.lstm(transformed_word_embeddings)
-        lstm_out = torch.mean(lstm_out.view(transformed_word_embeddings.shape[0], transformed_word_embeddings.shape[1],
+        if self.lstm.bidirectional:
+            lstm_out = torch.mean(lstm_out.view(transformed_word_embeddings.shape[0], transformed_word_embeddings.shape[1],
                                             2, -1), dim=2)
 
         logits = self.linear2(lstm_out)
         logits = logits.view(*discriminator_labels.shape)
 
-        loss = self.Wloss(logits, discriminator_labels)
+        loss = self.Wloss(logits, discriminator_labels, my_attention_mask)
 
         return logits, loss
+
 
 discriminator_models_and_config_classes = {
     'lstm': (DiscriminatorConfig, DiscriminatorLSTM),
