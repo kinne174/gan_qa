@@ -86,10 +86,9 @@ def inititalize_models(args, tokenizer):
     discriminatorM = discriminator_model_class.from_pretrained(**discriminator_model_dicts[args.discriminator_model_type])
 
     # apply initial weights
-    generatorM.apply(init_weights)
-    # attentionM.apply(init_weights)
-    classifierM.apply(init_weights)
-    discriminatorM.apply(init_weights)
+    # generatorM.apply(init_weights)
+    # classifierM.apply(init_weights)
+    # discriminatorM.apply(init_weights)
 
     # move to proper device based on if gpu is available
     logger.info('Loading models to {}'.format(args.device))
