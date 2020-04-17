@@ -44,7 +44,7 @@ class GeneralModelForMultipleChoice(nn.Module):
     def save_pretrained(self, save_directory):
         return self.model.save_pretrained(save_directory)
 
-    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels,
+    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels,
                 sentences_type, **kwargs):
         batch_size = input_ids.shape[0]
 
@@ -176,7 +176,7 @@ class ClassifierNet(nn.Module):
 
         assert hasattr(model_to_save, "config")
         config_filename = 'config.json'
-        with open(config_filename, 'wb') as cf:
+        with open(config_filename, 'w') as cf:
             json.dump(vars(model_to_save.config), cf)
 
     def forward(self, input_ids, attention_mask, token_type_ids, classification_labels, discriminator_labels, sentences_type, **kwargs):
@@ -247,12 +247,14 @@ class ClassifierNet(nn.Module):
         return scores, loss
 
 
-def flip_labels(classification_labels, **kwargs):
+def flip_labels(classification_labels, discriminator_labels, **kwargs):
 
     out_c_labels = torch.ones_like(classification_labels) - classification_labels
+    out_d_labels = discriminator_labels * -1
 
     out_dict = {k: v for k, v in kwargs.items()}
     out_dict['classification_labels'] = out_c_labels
+    out_dict['discriminator_labels'] = out_d_labels
 
     return out_dict
 

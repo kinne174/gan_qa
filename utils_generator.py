@@ -253,8 +253,8 @@ class GeneralModelforMaskedLM(nn.Module):
         assert temp_input_ids.dtype == torch.long
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
         model_outputs = self.model(input_ids=temp_input_ids,
-                                      attention_mask=temp_attention_mask,
-                                      token_type_ids=token_type_ids.view(-1, token_type_ids.shape[-1]) if token_type_ids is not None else None)
+                                   attention_mask=temp_attention_mask,
+                                   token_type_ids=token_type_ids.view(-1, token_type_ids.shape[-1]) if token_type_ids is not None else None)
 
         prediction_scores = model_outputs[0]
         vocab_size = prediction_scores.shape[-1]
