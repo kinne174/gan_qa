@@ -295,10 +295,11 @@ class AttentionEssential(nn.Module):
 
         out['my_attention_mask'] = out_attention_mask
         out['input_ids'] = out_input_ids
-        out['discriminator_labels'] = out['discriminator_labels'] - 2*out_attention_mask.to(self.device)
 
         assert all([ki in list(out.keys()) for ki in list(kwargs.keys())])
         assert all([ko in list(kwargs.keys()) for ko in list(out.keys())])
+
+        out['discriminator_labels'] = -1 * out_attention_mask
 
         return out
 
