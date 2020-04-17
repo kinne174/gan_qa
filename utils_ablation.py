@@ -161,7 +161,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
     return -1
 
 
-def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predictions, fake_predictions):
+def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, fake_predictions, real_predictions, generator_predictions):
     if not args.transformer_name in ['albert', 'roberta']:
         raise NotImplementedError
 
@@ -210,27 +210,24 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
             new_real_words = []
             for k, att in enumerate(my_attention_mask):
                 if att == 1:
-                    new_fake_words.extend(['*{}'.format(att_counter)] + [fake_words[k]] + ['*{}'.format(att_counter)])
-                    new_real_words.extend(['*{}'.format(att_counter)] + [real_words[k]] + ['*{}'.format(att_counter)])
+                    new_fake_words.extend(['*{}'.format(att_counter)] + ['({}, {:.3f}, {:.3f})'.format(''.join(translate_tokens(args, fake_words[k])), fake_predictions[i, j, k].item(), generator_predictions[i, j, k].item())] + ['*{}'.format(att_counter)])
+                    new_real_words.extend(['*{}'.format(att_counter)] + ['({}, {:.3f})'.format(''.join(translate_tokens(args, real_words[k])), real_predictions[i, j, k].item())] + ['*{}'.format(att_counter)])
 
                     att_counter += 1
                 else:
-                    new_fake_words.append(fake_words[k])
-                    new_real_words.append(real_words[k])
-
-
-            real_softmaxed_score = round(real_predictions[4*i+j, :].item(), 3)
-            fake_softmaxed_score = round(fake_predictions[4*i+j, :].item(), 3)
+                    new_fake_words.append('({}, {:.3f}, {:.3f})'.format(''.join(translate_tokens(args, fake_words[k])), fake_predictions[i, j, k].item(), generator_predictions[i, j, k].item()))
+                    new_real_words.append('({}, {:.3f})'.format(''.join(translate_tokens(args, real_words[k])), real_predictions[i, j, k].item()))
 
             with open(ablation_filename, write_append_trigger) as af:
 
-                af.write('Real score: {}, Fake score: {}\n'.format(real_softmaxed_score, fake_softmaxed_score))
+                # af.write('Real score: {}\n'.format(' '.join([str(round(rp.item(), 3)) for rp in real_predictions[i, j, :pad_index]])))
+                # af.write('Fake score: {}\n'.format(' '.join([str(round(fp.item(), 3)) for fp in fake_predictions[i, j, :pad_index]])))
 
-                rw = translate_tokens(args, new_real_words)
-                fw = translate_tokens(args, new_fake_words)
+                # rw = translate_tokens(args, new_real_words)
+                # fw = translate_tokens(args, new_fake_words)
 
-                af.write('Real words: {}\n'.format(' '.join(rw)))
-                af.write('Fake words: {}\n\n'.format(' '.join(fw)))
+                af.write('Real words: {}\n'.format('\t\t'.join(new_real_words)))
+                af.write('Fake words: {}\n\n'.format('\t\t'.join(new_fake_words)))
 
                 af.write('\n')
 
