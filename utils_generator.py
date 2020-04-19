@@ -7,6 +7,7 @@ from transformers import PretrainedConfig
 from torch.nn import functional as F
 import logging
 from tqdm import trange
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ class Seq2Seq(nn.Module):
             input = temp_input_ids[t, :]
 
         # should give dimension [max attention masks, 4*batch size, vocab size] with one hot vectors along the third dimension
-        gs = gumbel_softmax(outputs, self.device, hard=True)
+        gs = gumbel_softmax(outputs, self.device, temperature=max(0.5, math.exp(-1*(3e-3)*kwargs['update_step'])), hard=True)
 
         # should start with dimension [4*batch_size, max length, vocab size] with one hot vectors along the third dimension
         # one hot vectors are indicative of the word ids to be used by the classifier
@@ -327,9 +328,48 @@ class MyRobertaForMaskedLM(GeneralModelforMaskedLM):
         return cls(pretrained_model_name_or_path, config, device)
 
 
+class GeneratorReinforcement(nn.Module):
+    def __init__(self):
+        super(GeneratorReinforcement, self).__init__()
+
+    def save_pretrained(self, save_directory):
+        self.model.save_pretrained(save_directory)
+
+    def forward(self, input_ids, attention_mask, token_type_ids):
+        if hasattr(self.model, 'roberta'):
+            token_type_ids = None
+        elif hasattr(self.model, 'albert'):
+            pass
+        else:
+            raise NotImplementedError
+
+        # change from dimension [batch size, 4, max length] to [4*batch size, max length]
+        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+        temp_attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
+
+        assert temp_input_ids.dtype == torch.long
+        # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
+        model_outputs = self.model(input_ids=temp_input_ids,
+                                   attention_mask=temp_attention_mask,
+                                   token_type_ids=token_type_ids.view(-1, token_type_ids.shape[-1]) if token_type_ids is not None else None)
+
+        prediction_scores = model_outputs[0]
+
+        return prediction_scores
+
+class MyRobertaForMaskedLMReinforcement(GeneratorReinforcement):
+    def __init__(self, pretrained_model_name_or_path, config):
+        super(MyRobertaForMaskedLMReinforcement, self).__init__()
+        self.model = RobertaForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
+
 generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
     'roberta': (RobertaConfig, MyRobertaForMaskedLM),
-    'albert': (AlbertConfig, MyAlbertForMaskedLM)
+    'albert': (AlbertConfig, MyAlbertForMaskedLM),
+    'robeta-reinforcement': (RobertaConfig, MyRobertaForMaskedLMReinforcement)
 }
 
