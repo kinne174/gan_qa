@@ -25,7 +25,7 @@ class DiscriminatorLSTM(nn.Module):
 
         self.linear1 = nn.Linear(config.embedding_dim, config.hidden_dim)
         self.lstm = nn.LSTM(config.hidden_dim, config.hidden_dim, batch_first=True, bidirectional=True,
-                            num_layers=config.num_layers, dropout=config.dropout)
+                            num_layers=config.num_layers, dropout=0.10)
         self.linear2 = nn.Sequential(nn.Linear(config.hidden_dim, 1),
                                      nn.Tanh())
 
@@ -105,8 +105,90 @@ class DiscriminatorLSTM(nn.Module):
         return logits, loss
 
 
+class DiscriminatorReinforcement(nn.Module):
+    def __init__(self, config):
+        super(DiscriminatorReinforcement, self).__init__()
+
+        self.config = config
+
+        self.embedding_matrix_init()
+
+        self.linear1 = nn.Linear(config.embedding_dim, config.hidden_dim)
+        self.lstm = nn.LSTM(config.hidden_dim, config.hidden_dim, batch_first=True, bidirectional=True,
+                            num_layers=config.num_layers, dropout=0.10)
+        self.linear2 = nn.Sequential()
+        self.linear2.add_module('linear_fc1', nn.Linear(config.hidden_dim, config.hidden_dim))
+        self.linear2.add_module('relu_1', nn.ReLU())
+        self.linear2.add_module('dropout_1', nn.Dropout(p=0.10))
+        self.linear2.add_module('linear_fc_2', nn.Linear(config.hidden_dim, 1))
+        # self.linear2.add_module('tanh', nn.Tanh())
+
+
+    def embedding_matrix_init(self):
+        assert hasattr(self, "config")
+
+        if self.config.embedding_type is None:
+            self.embedding = nn.Embedding(self.config.vocab_size, self.config.embedding_dim, padding_idx=0)
+        else:
+            raise NotImplementedError
+
+    def save_pretrained(self, save_directory):
+        assert os.path.isdir(
+            save_directory
+        ), "Saving path should be a directory where the model and configuration can be saved"
+
+        model_to_save = self
+
+        # If we save using the predefined names, we can load using `from_pretrained`
+        output_model_file = os.path.join(save_directory, 'model_weights.pt')
+        torch.save(model_to_save.state_dict(), output_model_file)
+
+        assert hasattr(model_to_save, "config")
+        config_filename = os.path.join(save_directory, 'config.json')
+        with open(config_filename, 'w') as cf:
+            json.dump(vars(model_to_save.config), cf)
+
+        logger.info("Model weights and config saved in {}".format(output_model_file))
+
+
+    @classmethod
+    def from_pretrained(cls, config, pretrained_model_path):
+        if pretrained_model_path is not None and os.path.exists(pretrained_model_path):
+            config_filename = os.path.join(pretrained_model_path, 'config.json')
+            with open(config_filename, 'r') as cf:
+                config_json = json.load(cf)
+            config = DiscriminatorConfig(**config_json)
+
+            model_to_return = cls(config)
+            model_load_filename = os.path.join(pretrained_model_path, 'model_weights.pt')
+            model_to_return.load_state_dict(torch.load(model_load_filename))
+
+            return model_to_return
+
+        return cls(config)
+
+    def forward(self, input_ids):
+
+        temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
+
+        word_embeddings = self.embedding(temp_input_ids)
+
+        transformed_word_embeddings = self.linear1(word_embeddings)
+
+        lstm_out, (last_hidden, last_cell) = self.lstm(transformed_word_embeddings)
+        if self.lstm.bidirectional:
+            lstm_out = torch.mean(lstm_out.view(transformed_word_embeddings.shape[0],
+                                                transformed_word_embeddings.shape[1],
+                                                2, -1), dim=2)
+
+        logits = self.linear2(lstm_out)
+        logits = logits.view(*input_ids.shape)
+
+        return logits
+
 discriminator_models_and_config_classes = {
     'lstm': (DiscriminatorConfig, DiscriminatorLSTM),
+    'lstm-reinforce': (DiscriminatorConfig, DiscriminatorReinforcement),
 }
 
 
