@@ -11,84 +11,74 @@ from utils_discriminator import discriminator_models_and_config_classes
 # logging
 logger = logging.getLogger(__name__)
 
-# generally setting up the models with initial weights
-def init_weights(m):
-    if type(m) == nn.Linear:
-        m.weight.data.normal_(-0.01, 0.01)
-        m.bias.data.fill_(0.01)
-
 def inititalize_models(args, tokenizer):
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
     attention_config_class, attention_model_class = attention_models_and_config_classes[args.attention_model_type]
     discriminator_config_class, discriminator_model_class = discriminator_models_and_config_classes[args.discriminator_model_type]
 
-    attention_config_dicts = {'essential': {'mu_p': args.essential_mu_p,
-                                            'mask_id': tokenizer.mask_token_id},}
-    generator_config_dicts = {'seq': {'pretrained_model_name_or_path': 'seq',
-                                      'input_dim': tokenizer.vocab_size,},
-                              'roberta': {'pretrained_model_name_or_path': args.generator_model_name},
-                              'albert': {'pretrained_model_name_or_path': args.generator_model_name},
-                              }
-    classifier_config_dicts = {'linear': {'num_choices': 4,
-                                          'in_features': args.max_length,
-                                          'hidden_features': args.classifier_hidden_dim,
-                                          'vocab_size': tokenizer.vocab_size,
-                                          'embedding_dimension': args.classifier_embedding_dim,},
-                               'roberta': {'pretrained_model_name_or_path': args.classifier_model_name,
+    # essential, essential-reinforce
+    attention_config_dict = {'mu_p': args.essential_mu_p,
+                             'mask_id': tokenizer.mask_token_id}
+
+    # roberta, albert, seq, roberta-reinforce
+    generator_config_dict = {'pretrained_model_name_or_path': args.generator_model_name}
+    if args.generator_model_type in ['seq']:
+        generator_config_dict.update({'input_dim': tokenizer.vocab_size})
+
+    # roberta, albert, linear-reinforce, roberta-reinforce
+    classifier_config_dict = {}
+    if args.classifier_model_type in ['roberta', 'albert', 'roberta-reinforce']:
+        classifier_config_dict.update({'pretrained_model_name_or_path': args.classifier_model_name,
                                         'num_labels': 4,
                                         'finetuning_task': 'ARC',
-                                        'output_hidden_states': True},
-                               'albert': {'pretrained_model_name_or_path': args.classifier_model_name,
-                                        'num_labels': 4,
-                                        'finetuning_task': 'ARC',
-                                        'output_hidden_states': True},
-                               }
-    discriminator_config_dicts = {'lstm': {'embedding_type': args.discriminator_embedding_type,
-                                           'embedding_dim': args.discriminator_embedding_dim,
-                                           'hidden_dim': args.discriminator_hidden_dim,
-                                           'num_layers': args.discriminator_num_layers,
-                                           'dropout': args.discriminator_dropout,
-                                           'vocab_size': tokenizer.vocab_size,
-                                           'pretrained_model_name': args.discriminator_model_name}}
+                                        'output_hidden_states': True})
+    if args.classifier_model_type in ['linear-reinforce']:
+        classifier_config_dict.update({'vocab_size': tokenizer.vocab_size,
+                                       'embedding_dimension': args.classifier_embedding_dim,
+                                       'hidden_dim': args.classifier_hidden_dim,
+                                       'num_layers': args.classifier_num_layers})
+
+    # lstm, lstm-reinforce
+    discriminator_config_dict = {'embedding_type': args.discriminator_embedding_type,
+                                 'embedding_dim': args.discriminator_embedding_dim,
+                                 'hidden_dim': args.discriminator_hidden_dim,
+                                 'num_layers': args.discriminator_num_layers,
+                                 'vocab_size': tokenizer.vocab_size,}
 
     logger.info('Establishing config classes.')
-    attention_config = attention_config_class.from_pretrained(**attention_config_dicts[args.attention_model_type])
-    generator_config = generator_config_class.from_pretrained(**generator_config_dicts[args.generator_model_type])
-    classifier_config = classifier_config_class.from_pretrained(**classifier_config_dicts[args.classifier_model_type])
-    discriminator_config = discriminator_config_class(**discriminator_config_dicts[args.discriminator_model_type])
+    attention_config = attention_config_class.from_pretrained(**attention_config_dict)
+    generator_config = generator_config_class.from_pretrained(**generator_config_dict)
+    classifier_config = classifier_config_class.from_pretrained(**classifier_config_dict)
+    discriminator_config = discriminator_config_class(**discriminator_config_dict)
 
-    attention_model_dicts = {'essential': {'config': attention_config},}
-    generator_model_dicts = {'seq': {'config': generator_config},
-                              'roberta': {'pretrained_model_name_or_path': args.generator_model_name,
-                                       'config': generator_config},
-                              'albert': {'pretrained_model_name_or_path': args.generator_model_name,
-                                       'config': generator_config},
-                              }
-    classifier_model_dicts = {'linear':{'pretrained_model_name_or_path': args.classifier_model_name,
-                                        'config': classifier_config},
-                              'roberta': {'pretrained_model_name_or_path': args.classifier_model_name,
-                                       'config': classifier_config},
-                              'albert': {'pretrained_model_name_or_path': args.classifier_model_name,
-                                       'config': classifier_config},
-                              }
-    discriminator_model_dicts = {'lstm': {'pretrained_model_path': args.discriminator_model_name,
-                                          'config': discriminator_config}}
+    # essential, essential-reinforce
+    attention_model_dict = {'config': attention_config}
+    if args.attention_model_type in ['essential']:
+        attention_model_dict.update({'device': args.device})
 
-    for D in [attention_model_dicts, generator_model_dicts, classifier_model_dicts]:
-        for k in D.keys():
-            D[k].update({'device': args.device})
+    # roberta, albert, seq, roberta-reinforce
+    generator_model_dict = {'config': generator_config}
+    if args.generator_model_type in ['roberta', 'albert']:
+        generator_model_dict.update({'device': args.device})
+    if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce']:
+        generator_model_dict.update({'pretrained_model_name_or_path': args.generator_model_name})
+
+    # roberta, albert, linear-reinforce, roberta-reinforce
+    classifier_model_dict = {'config': classifier_config,
+                             'pretrained_model_name_or_path': args.classifier_model_name}
+    if args.classifier_model_type in ['roberta', 'albert']:
+        classifier_model_dict.update({'device': args.device})
+
+    # lstm, lstm-reinforce
+    discriminator_model_dict = {'pretrained_model_path': args.discriminator_model_name,
+                                'config': discriminator_config}
 
     logger.info('Establishing model classes')
-    attentionM = attention_model_class.from_pretrained(**attention_model_dicts[args.attention_model_type])
-    generatorM = generator_model_class.from_pretrained(**generator_model_dicts[args.generator_model_type])
-    classifierM = classifier_model_class.from_pretrained(**classifier_model_dicts[args.classifier_model_type])
-    discriminatorM = discriminator_model_class.from_pretrained(**discriminator_model_dicts[args.discriminator_model_type])
-
-    # apply initial weights
-    # generatorM.apply(init_weights)
-    # classifierM.apply(init_weights)
-    # discriminatorM.apply(init_weights)
+    attentionM = attention_model_class.from_pretrained(**attention_model_dict)
+    generatorM = generator_model_class.from_pretrained(**generator_model_dict)
+    classifierM = classifier_model_class.from_pretrained(**classifier_model_dict)
+    discriminatorM = discriminator_model_class.from_pretrained(**discriminator_model_dict)
 
     # move to proper device based on if gpu is available
     logger.info('Loading models to {}'.format(args.device))
