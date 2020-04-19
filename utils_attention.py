@@ -307,6 +307,68 @@ class AttentionEssential(nn.Module):
         raise NotImplementedError
 
 
+class AttentionEssentialReinforce(nn.Module):
+    def __init__(self, config):
+        super(AttentionEssentialReinforce, self).__init__()
+
+        self.mu_p = config.mu_p
+        self.mask_id = config.mask_id
+
+    @classmethod
+    def from_pretrained(cls, config):
+        return cls(config)
+
+    def forward(self, input_ids, my_attention_mask):
+        # all_attention_mask = kwargs['my_attention_mask']
+        out_my_attention_mask = my_attention_mask[:, :, :my_attention_mask.shape[-1] // 2]
+        # all_tokenizer_attention_mask = kwargs['attention_mask']
+
+        # all_input_ids = kwargs['input_ids']
+
+        for k in range(out_my_attention_mask.shape[0]):
+            for j in range(out_my_attention_mask.shape[1]):
+                current_my_attention_mask = my_attention_mask[k, j, :my_attention_mask.shape[-1] // 2].squeeze()
+                shared_tokens = my_attention_mask[k, j, my_attention_mask.shape[-1] // 2:].squeeze().long()
+
+                # current_input_ids = input_ids[k, j, :]
+
+                non_zero_indices = current_my_attention_mask.nonzero().reshape((-1))
+
+                num_to_mask = int(self.mu_p*non_zero_indices)
+
+                non_zeros = current_my_attention_mask[non_zero_indices]
+                prob_vector = non_zeros/torch.sum(non_zeros)
+
+                non_zero_indices_np = non_zero_indices.cpu().numpy()
+                prob_vector_np = prob_vector.cpu().numpy()
+
+                try:
+
+                    weighted_perm = np.random.choice(non_zero_indices_np, size=(non_zero_indices_np.shape[0],), replace=False, p=prob_vector_np)
+
+                except ValueError:
+
+                    weighted_perm = np.argpartition(prob_vector_np, num_to_mask)[::-1]
+
+                    # non_zero_and_probs = list(map(tuple, zip(non_zero_indices_np, prob_vector_np)))
+                    # non_zero_and_probs.sort(key=lambda t: t[1])
+                    # weighted_perm, _ = map(list, zip(*non_zero_and_probs))
+
+
+                indices_to_mask = weighted_perm[:num_to_mask]
+                # shared_tokens_to_mask = [shared_tokens[itm].item() for itm in indices_to_mask]
+                # indices_to_mask = [i for i in range(shared_tokens.shape[0]) if shared_tokens[i] in shared_tokens_to_mask]
+
+                for i, id in enumerate(input_ids[k, j, :]):
+                    if i in indices_to_mask:
+                        input_ids[k, j, i] = self.mask_id
+
+                for i in range(current_my_attention_mask.shape[0]):
+                    out_my_attention_mask[k, j, i] = 1 if i in indices_to_mask else 0
+
+
+        return input_ids, out_my_attention_mask, -1 * out_my_attention_mask
+
 class AttentionConfig(PretrainedConfig):
     def __init__(self, **kwargs):
         super(AttentionConfig, self).__init__()
@@ -326,5 +388,6 @@ class AttentionConfig(PretrainedConfig):
 attention_models_and_config_classes = {
     'random': (AttentionConfig, AttentionNet),
     'PMI': (AttentionConfig, AttentionPMI),
-    'essential': (AttentionConfig, AttentionEssential)
+    'essential': (AttentionConfig, AttentionEssential),
+    'essential-reinforce': (AttentionConfig, AttentionEssentialReinforce)
 }
