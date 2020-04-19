@@ -129,8 +129,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
     train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size*args.minibatch_size)
 
     # optimizers
-    classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
-    generatorO = AdamW(generatorM.parameters(), lr=args.learning_rate_generator, eps=args.epsilon_generator)
+    classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier, weight_decay=1)
+    generatorO = AdamW(generatorM.parameters(), lr=args.learning_rate_generator, eps=args.epsilon_generator, weight_decay=1)
     discriminatorO = AdamW(discriminatorM.parameters(), lr=args.learning_rate_classifier, eps=args.epsilon_classifier)
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
@@ -142,7 +142,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
             os.makedirs(ablation_dir)
 
     best_dev_acc = 0.0
-    global_step = 0
+    global_step, update_step = 0, 0
 
     # do an evaluation first
     if args.do_prevaluation:
@@ -207,6 +207,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                           'classification_labels': minibatch[4],
                           # 'discriminator_labels': None,  # assigned later in code
                           'sentences_type': minibatch[5],
+                          'update_step': update_step,
                           }
                 mbatch_size = inputs['input_ids'].shape[0]
 
@@ -305,7 +306,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                                  dtype=torch.int).detach().cpu()
 
                     error_real_c /= args.minibatch_size  # already dividing by sum in utils_classifier
-                    error_real_c.backward(retain_graph=True)
+                    error_real_c.backward()
 
                     minibatch_error_real_c += error_real_c.detach().item()
 
@@ -355,6 +356,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 # will instead save them in a list
                 classifierM.zero_grad()
                 discriminatorM.zero_grad()
+
+                update_step += 1
 
                 if args.do_ablation_discriminator:
                     ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, predictions_fake_d, predictions_real_d, predictions_g_d)
@@ -690,7 +693,7 @@ def main():
                 self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/saved/roberta-base/'
                 self.attention_model_type = 'essential'
                 self.transformer_name = 'roberta'
-                self.evaluate_during_training = False
+                self.evaluate_during_training = True
                 self.cutoff = None
                 self.epochs = 3
                 self.learning_rate_classifier = 9e-5
@@ -708,7 +711,7 @@ def main():
                 self.max_length = 256
                 self.batch_size = 2
                 self.do_lower_case = True
-                self.save_steps = 30
+                self.save_steps = 10
                 self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.20
                 self.use_corpus = False
@@ -719,7 +722,7 @@ def main():
                 self.minibatch_size = 25
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
-                self.no_classification_error = True
+                self.no_classification_error = False
                 self.no_discriminator_error = False
                 self.discriminator_model_type = 'lstm'
                 # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-roberta-moon_earth/roberta-discriminator-60/'
@@ -799,12 +802,6 @@ def main():
     device = get_device() if args.use_gpu else torch.device('cpu')
     args.device = device
     logger.info('Using device {}'.format(args.device))
-
-    if args.use_gpu:
-        logger.info('All models uploaded to {}, total memory is {} GB cached, and {} GB allocated.'.format(args.device,
-                                                                                                           torch.cuda.memory_allocated(args.device)*1e-9,
-                                                                                                           torch.cuda.memory_cached(args.device)*1e-9))
-        logger.info('The number of gpus available is {}'.format(torch.cuda.device_count()))
 
     if args.do_train:
         # initialize and return models
