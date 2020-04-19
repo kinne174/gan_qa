@@ -24,7 +24,7 @@ class DiscriminatorLSTM(nn.Module):
         self.embedding_matrix_init()
 
         self.linear1 = nn.Linear(config.embedding_dim, config.hidden_dim)
-        self.lstm = nn.LSTM(config.hidden_dim, config.hidden_dim, batch_first=True, bidirectional=False,
+        self.lstm = nn.LSTM(config.hidden_dim, config.hidden_dim, batch_first=True, bidirectional=True,
                             num_layers=config.num_layers, dropout=config.dropout)
         self.linear2 = nn.Sequential(nn.Linear(config.hidden_dim, 1),
                                      nn.Tanh())
