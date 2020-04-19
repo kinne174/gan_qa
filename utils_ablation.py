@@ -210,8 +210,8 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
             new_real_words = []
             for k, att in enumerate(my_attention_mask):
                 if att == 1:
-                    new_fake_words.extend(['*{}'.format(att_counter)] + ['({}, {:.3f}, {:.3f})'.format(''.join(translate_tokens(args, fake_words[k])), fake_predictions[i, j, k].item(), generator_predictions[i, j, k].item())] + ['*{}'.format(att_counter)])
-                    new_real_words.extend(['*{}'.format(att_counter)] + ['({}, {:.3f})'.format(''.join(translate_tokens(args, real_words[k])), real_predictions[i, j, k].item())] + ['*{}'.format(att_counter)])
+                    new_fake_words.append('({}, {:.3f}, {:.3f}) *{}*'.format(''.join(translate_tokens(args, fake_words[k])), fake_predictions[i, j, k].item(), generator_predictions[i, j, k].item(), att_counter))
+                    new_real_words.append('*{}* ({}, {:.3f})'.format(att_counter, ''.join(translate_tokens(args, real_words[k])), real_predictions[i, j, k].item()))
 
                     att_counter += 1
                 else:
@@ -226,8 +226,9 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
                 # rw = translate_tokens(args, new_real_words)
                 # fw = translate_tokens(args, new_fake_words)
 
-                af.write('Real words: {}\n'.format('\t\t'.join(new_real_words)))
-                af.write('Fake words: {}\n\n'.format('\t\t'.join(new_fake_words)))
+                af.write('(Real Words, #score#), (Generated Words, #discriminator score#, #generator score#)\n')
+                for rw, fw in zip(new_real_words, new_fake_words):
+                    af.write('{}, {}\n'.format(rw, fw))
 
                 af.write('\n')
 
