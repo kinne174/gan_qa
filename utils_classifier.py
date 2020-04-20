@@ -260,6 +260,7 @@ class MyRobertForMultipleChoice(GeneralModelForMultipleChoice):
     def from_pretrained(cls, pretrained_model_name_or_path, config, device):
         return cls(pretrained_model_name_or_path, config, device)
 
+
 class GeneralModelForMultipleChoiceReinforce(nn.Module):
     def __init__(self, model):
         super(GeneralModelForMultipleChoiceReinforce, self).__init__()
@@ -269,7 +270,7 @@ class GeneralModelForMultipleChoiceReinforce(nn.Module):
     def save_pretrained(self, save_directory):
         return self.model.save_pretrained(save_directory)
 
-    def forward(self, input_ids, attention_mask, token_type_ids, classifier_labels):
+    def forward(self, input_ids, attention_mask, token_type_ids):
 
         if hasattr(self.model, 'roberta'):
             token_type_ids = None
@@ -294,6 +295,7 @@ class MyRobertForMultipleChoiceReinforce(GeneralModelForMultipleChoiceReinforce)
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
+
 
 class ClassifierNetReinforce(nn.Module):
 
@@ -360,9 +362,9 @@ class ClassifierNetReinforce(nn.Module):
         if self.LSTM.lstm.bidirectional:
             lstm_out = torch.mean(lstm_out.view(input_embeddings.shape[0], input_embeddings.shape[1],
                                             2, -1), dim=2)
-        lstm_out_no_padding = torch.cat([lstm_out[i, attention_mask[i, :].tolist().index(0), :] for i in range(input_ids.shape[0])], dim=0)
+        lstm_out_no_padding = torch.cat([lstm_out[i, torch.sum(attention_mask[i, :]-1, dtype=torch.long), :].unsqueeze(0) for i in range(input_ids.shape[0])], dim=0)
 
-        logits = self.MLP2(lstm_out_no_padding)
+        logits = self.MLP(lstm_out_no_padding)
         logits = logits.view(-1, 4)
 
         return logits
