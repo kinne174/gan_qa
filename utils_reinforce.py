@@ -8,16 +8,19 @@ import random
 
 logger = logging.getLogger(__name__)
 
-def train_generator(args, fake_inputs, generatorM, classifierM, discriminatorM):
+sigmoid = nn.Sigmoid()
+
+def train_generator(args, input_ids, attention_mask, my_attention_mask, token_type_ids, classification_labels,
+                    sentences_type, generatorM, classifierM, discriminatorM):
 
     generatorM.train()
 
-    input_ids = fake_inputs['input_ids']
-    attention_mask = fake_inputs['attention_mask']
-    my_attention_mask = fake_inputs['my_attention_mask']
-    token_type_ids = fake_inputs['token_type_ids']
-    classification_labels = fake_inputs['classification_labels']
-    sentences_type = fake_inputs['sentences_type']
+    # input_ids = fake_inputs['input_ids']
+    # attention_mask = fake_inputs['attention_mask']
+    # my_attention_mask = fake_inputs['my_attention_mask']
+    # token_type_ids = fake_inputs['token_type_ids']
+    # classification_labels = fake_inputs['classification_labels']
+    # sentences_type = fake_inputs['sentences_type']
 
     # draw fake probability for words
 
@@ -34,40 +37,43 @@ def train_generator(args, fake_inputs, generatorM, classifierM, discriminatorM):
     logits_discriminator = discriminatorM(fake_input_ids)
     logits_classifier = classifierM(fake_input_ids, attention_mask, token_type_ids)
 
-    rewards_classifier = my_CrossEntropyLoss(logits_classifier, neg_one=True)
+    rewards_discriminator = 2*sigmoid(logits_discriminator) - 1
+    rewards_classifier = my_CrossEntropyLoss(logits_classifier, classification_labels.nonzero()[:, 1].long(), neg_one=False)
 
     # calculate errors
-    # have to make sure touse fake_vocabulary_probs to get connection to generator, see eq 9 in scratch gan
-    loss = discount_rewards(args, fake_vocabulary_probs, fake_action, logits_discriminator, sentences_type, rewards_classifier)
+    # have to make sure to use fake_vocabulary_probs to get connection to generator, see eq 9 in scratch gan
+    loss = discount_rewards(args, fake_vocabulary_probs, fake_action, my_attention_mask,
+                            rewards_discriminator, sentences_type, rewards_classifier)
 
     return loss, fake_input_ids, (logits_discriminator, logits_classifier)
 
-def train_classifier_discriminator(args, fake_inputs, real_inputs, discriminatorM, classifierM):
+def train_classifier_discriminator(args, fake_input_ids, real_input_ids, attention_mask, my_attention_mask,
+                                   token_type_ids, classification_labels, sentences_type, discriminatorM, classifierM):
 
-    fake_input_ids = fake_inputs['input_ids']
-    real_input_ids = real_inputs['input_ids']
-    attention_mask = fake_inputs['attention_mask']
-    my_attention_mask = fake_inputs['my_attention_mask']
-    token_type_ids = fake_inputs['token_type_ids']
-    classification_labels = real_inputs['classification_labels']
-    sentences_type = fake_inputs['sentences_type']
+    # fake_input_ids = fake_inputs['input_ids']
+    # real_input_ids = real_inputs['input_ids']
+    # attention_mask = fake_inputs['attention_mask']
+    # my_attention_mask = fake_inputs['my_attention_mask']
+    # token_type_ids = fake_inputs['token_type_ids']
+    # classification_labels = real_inputs['classification_labels']
+    # sentences_type = fake_inputs['sentences_type']
 
     if sentences_type.nonzero().shape[0]:
         logits_real_c = classifierM(real_input_ids, attention_mask, token_type_ids)
-        error_real_c = my_CrossEntropyLoss(logits_real_c, neg_one=False)
-        error_real_c = torch.sum(sentences_type * error_real_c[(classification_labels == 1).nonzero(as_tuple=True)]) / torch.sum(sentences_type)
+        error_real_c = my_CrossEntropyLoss(logits_real_c, classification_labels.nonzero()[:, 1].long(), neg_one=True)
+        error_real_c = torch.sum(sentences_type * error_real_c) / torch.sum(sentences_type)
     else:
         logits_real_c, error_real_c = None, None
 
     logits_real_d = discriminatorM(real_input_ids)
     # error_real_d = Wloss(logits_real_d, real_discriminator_labels, my_attention_mask, use_tanh=True)
-    error_real_d = my_CrossEntropyLoss(logits_real_d, neg_one=True)
-    error_real_d = (error_real_d * my_attention_mask) / float(my_attention_mask.nonzero().shape[0])
+    error_real_d = my_BinaryCrossEntropyLoss(logits_real_d, my_attention_mask, neg_one=True)
+    error_real_d = torch.sum(error_real_d[my_attention_mask.nonzero(as_tuple=True)]) / float(my_attention_mask.nonzero().shape[0])
 
     logits_fake_d = discriminatorM(fake_input_ids)
     # error_fake_d = Wloss(logits_fake_d, fake_discriminator_labels, my_attention_mask, use_tanh=True)
-    error_fake_d = my_CrossEntropyLoss(logits_fake_d, neg_one=False)
-    error_fake_d = (error_fake_d * my_attention_mask) / float(my_attention_mask.nonzero().shape[0])
+    error_fake_d = my_BinaryCrossEntropyLoss(logits_fake_d, my_attention_mask, neg_one=False)
+    error_fake_d = torch.sum(error_fake_d[my_attention_mask.nonzero(as_tuple=True)]) / float(my_attention_mask.nonzero().shape[0])
 
     return (logits_real_c, logits_real_d, logits_fake_d), (error_real_c, error_real_d, error_fake_d)
 
@@ -77,22 +83,22 @@ def word_index_selector(vocab_probs, method):
     if method == 'argmax':
         # do argmax over the third dimension of the probabilities
         out = torch.argmax(vocab_probs, -1)
-        assert out.shape == vocab_probs.shape[:-1]
+        assert out.shape == vocab_probs.shape[:-1], 'shape of outputted action should match [batch * 4 * max_length]'
         return out
-        pass
     elif method == 'sample':
         # sample from the probabilities
-        out = torch.empty(*vocab_probs.shape[:-1])
-        for i in range(vocab_probs.shape[0]):
-            for j in range(vocab_probs.shape[1]):
-                for k in range(vocab_probs.shape[2]):
-                    out[i, j, k] = int(random.choices(range(vocab_probs.shape[-1]), weights=vocab_probs[i, j, k, :]))
-        assert out.shape == vocab_probs.shape[:-1]
+        assert torch.all(vocab_probs >= 0), 'vocab probabilities are not all greater or equal to zero!'
+        multi = torch.distributions.Multinomial(1, vocab_probs)
+        samp = multi.sample()
+
+        out = torch.argmax(samp, dim=-1)
+        assert out.shape == vocab_probs.shape[:-1], 'shape of outputted action should match [batch * 4 * max_length]'
         return out
     else:
         raise NotImplementedError
 
-def discount_rewards(args, vocab_probs, action, rewards_d, sentences_type, rewards_c):
+
+def discount_rewards(args, vocab_probs, action, my_attention_mask, rewards_d, sentences_type, rewards_c):
     '''
 
     :param args: should have the gamma value and weighting between rewards_d/ rewards_c
@@ -104,30 +110,29 @@ def discount_rewards(args, vocab_probs, action, rewards_d, sentences_type, rewar
     '''
 
     gamma = args.reinforce_gamma
-    gamma_tensor = torch.tensor([gamma**i for i in range(vocab_probs.shape[-1])]).view(1, 1, vocab_probs.shape[-1])
+    gamma_tensor = torch.tensor([gamma**i for i in range(action.shape[-1])]).to(args.device)
 
     assert isinstance(vocab_probs, torch.Tensor)
-    probs_selected = vocab_probs.gather(dim=3, index=action).squeeze()
+    probs_selected = vocab_probs.gather(dim=3, index=action.unsqueeze(-1)).squeeze()
 
-    # TODO this is different than equation 7 in scratch gan, may want to find a way to do it like them,
-    #  could be done with a rotating idea with gammas before cumsum
     # TODO are classifier inputs just rewarded more??
-    rewards = (sentences_type * rewards_c).unsqueeze(2) + rewards_d
+    rewards = ((sentences_type * rewards_c).view(-1, 1, 1) + rewards_d) * my_attention_mask
+    rewards = rewards.view(-1, rewards.shape[-1])
+    my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])
 
-    rewards_gamma = rewards * gamma_tensor
+    rewards_gamma = torch.empty_like(rewards).to(args.device)
+    for j in range(rewards_gamma.shape[-1]):
+        rewards_gamma[:, j] = torch.sum(gamma_tensor[:len(gamma_tensor)-j].unsqueeze(0) * rewards[:, j:], dim=1)
 
-    flipped_rewards = torch.flip(rewards_gamma, [2])
-    cumsum_flipped_rewards = torch.cumsum(flipped_rewards, dim=2)
-    cumsum_rewards = torch.flip(cumsum_flipped_rewards, [2])
+    # flipped_rewards = torch.flip(rewards_gamma, [2])
+    # cumsum_flipped_rewards = torch.cumsum(flipped_rewards, dim=2)
+    # cumsum_rewards = torch.flip(cumsum_flipped_rewards, [2])
 
-    rewards_minus = cumsum_rewards - torch.mean(cumsum_rewards, dim=2).unsqueeze(2)
+    rewards_minus_mean = rewards_gamma - (torch.sum(rewards_gamma * my_attention_mask, dim=-1) / torch.sum(my_attention_mask, dim=-1)).unsqueeze(-1)
 
-    out = -1 * rewards_minus * torch.log(probs_selected)
+    out = -1 * rewards_minus_mean * torch.log(probs_selected.view(-1, probs_selected.shape[-1])) * my_attention_mask
 
-    # TODO more thought needs to be put into the rewards, do I use labels for discriminator? do I use equation
-    #  6 from scratch gan to compute rewards? do I do it only for generated words or for all words?
-
-    return out.mean()
+    return torch.sum(out) / torch.sum(my_attention_mask)
 
 
 def Wloss(preds, labels, my_attention_mask, use_tanh=False):
@@ -139,11 +144,18 @@ def Wloss(preds, labels, my_attention_mask, use_tanh=False):
     return -1 * torch.sum(preds * labels * my_attention_mask) / float(my_attention_mask.nonzero().shape[0])
 
 
-def my_CrossEntropyLoss(scores, neg_one=False):
-    multiplier = -1 if neg_one else 1
-    return multiplier * torch.log(torch.exp(scores) / torch.sum(torch.exp(scores), dim=-1))
+def my_CrossEntropyLoss(scores, labels, neg_one=False):
+    CrossEntropy = nn.CrossEntropyLoss(reduction='none')
+    multiplier = 1. if neg_one else -1.  # cross entropy already multiplied by neg 1
+    out = multiplier * CrossEntropy(scores, labels)
+    return out
 
 
+def my_BinaryCrossEntropyLoss(scores, labels, neg_one=False):
+    BCE = nn.BCEWithLogitsLoss(reduction='none')
+    multiplier = 1. if neg_one else -1.  # cross entropy already multiplied by neg 1
+    out = multiplier * BCE(scores, labels)
+    return out
 
 
 

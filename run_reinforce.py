@@ -54,14 +54,11 @@ def select_field(features, field):
     ]
 
 
-def detach_inputs(fake_inputs, inputs):
-    assert 'input_ids' in fake_inputs and 'input_ids' in inputs
-    assert 'inputs_embeds' in fake_inputs
+def detach_inputs(tuple_of_tensors):
 
-    fake_inputs = {k: v.detach() if hasattr(v, 'detach') else v for k, v in fake_inputs.items()}
-    inputs = {k: v.detach() if hasattr(v, 'detach') else v for k, v in inputs.items()}
+    out_tensors = (t.detach() if hasattr(t, 'detach') else t for t in tuple_of_tensors)
 
-    return fake_inputs, inputs
+    return out_tensors
 
 
 # return if there is a gpu available
@@ -84,7 +81,8 @@ def label_map(labels, num_choices):
     return answers
 
 
-def flip_labels(classification_labels, discriminator_labels):
+def flip_labels(classification_labels=None, discriminator_labels=None):
+
     out_c_labels = None
     out_d_labels = None
 
@@ -131,16 +129,16 @@ def load_and_cache_features(args, tokenizer, subset):
     return dataset
 
 
-def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM):
+def train(args, dataset, generatorM, attentionM, classifierM, discriminatorM):
 
     # use pytorch data loaders to cycle through the data
     train_sampler = RandomSampler(dataset, replacement=False)
-    train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size*args.accumulation_steps)
+    train_dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=args.batch_size)
 
     # optimizers
-    classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier)
+    classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, weight_decay=1)
     generatorO = AdamW(generatorM.parameters(), lr=args.learning_rate_generator)
-    discriminatorO = AdamW(discriminatorM.parameters(), lr=args.learning_rate_classifier)
+    discriminatorO = AdamW(discriminatorM.parameters(), lr=args.learning_rate_classifier, weight_decay=1)
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
 
@@ -183,43 +181,49 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
             discriminatorM.train()
 
             # this changes the 'my_attention_masks' input to highlight which words should be changed
-            fake_inputs = attentionM(**real_inputs)
+            masked_input_ids, my_attention_mask, fake_discriminator_labels = attentionM(real_inputs['input_ids'], real_inputs['my_attention_mask'])
 
             # flip labels to represent the wrong answers are actually right
-            fake_inputs = flip_labels(**fake_inputs)
+            fake_classification_labels, real_discriminator_labels = \
+                flip_labels(classification_labels=real_inputs['classification_labels'],
+                            discriminator_labels=fake_discriminator_labels)
 
-            fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
-
-            generator_reward, fake_input_ids, (logits_discriminator, logits_classifier) = train_generator(args,
-                                                                                                          fake_inputs,
+            generator_loss, fake_input_ids, (logits_discriminator, logits_classifier) = train_generator(args,
+                                                                                                          masked_input_ids,
+                                                                                                          real_inputs['attention_mask'],
+                                                                                                          my_attention_mask,
+                                                                                                          real_inputs['token_type_ids'],
+                                                                                                          real_inputs['classification_labels'],
+                                                                                                          real_inputs['sentences_type'],
                                                                                                           generatorM,
                                                                                                           classifierM,
                                                                                                           discriminatorM)
 
             # assign fake_input_ids to fake_inputs
             fake_input_ids = fake_input_ids.to(args.device)
-            fake_inputs['input_ids'] = fake_input_ids
 
-            generator_reward /= args.accumulation_steps
-            generator_reward.backward()
+            generator_loss /= args.accumulation_steps
+            generator_loss.backward()
+
+            # print('generator model')
+            # generator_grads = [p.grad for p in generatorM.parameters()]
+            # for i in range(len(generator_grads)):
+            #     print(i)
+            #     print(generator_grads[i])
+            #     if generator_grads[i] is not None:
+            #         print(torch.max(generator_grads[i]))
 
             # zero out classifier and discriminator so they do not accumulate these gradients
             classifierM.zero_grad()
             discriminatorM.zero_grad()
 
             # detach the inputs so the gradient graphs don't reach back, only need them for discriminator/ classifier
-            fake_inputs, real_inputs = detach_inputs(fake_inputs, real_inputs)
-
-            # give inputs the my_attention_mask to be used in discriminator
-            real_inputs['my_attention_mask'] = fake_inputs['my_attention_mask']
-            real_inputs['discriminator_labels'] = fake_inputs['discriminator_labels']  # before flipping
-
-            # flip labels to represent the wrong answers are actually right
-            fake_inputs = flip_labels(**fake_inputs)
-            fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
+            fake_input_ids, my_attention_mask = detach_inputs([fake_input_ids, my_attention_mask])
 
             (logits_real_c, logits_real_d, logits_fake_d), (error_real_c, error_real_d, error_fake_d) = \
-                train_classifier_discriminator(args, fake_inputs, real_inputs, discriminatorM, classifierM)
+                train_classifier_discriminator(args, fake_input_ids, real_inputs['input_ids'], real_inputs['attention_mask'],
+                                               my_attention_mask, real_inputs['token_type_ids'], real_inputs['classification_labels'],
+                                               real_inputs['sentences_type'], discriminatorM, classifierM)
 
             # error_real_c is classification error, error_real_d is discriminator error
             if error_real_c is not None:
@@ -267,14 +271,14 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 # Update generatorM parameters
                 generatorO.step()
 
+                # TODO put messaging about training success
+
                 # update classifier/discriminator parameters
                 if args.train_classifier and len(classifier_gradients):
-                    print('classifier model')
                     for i, p in enumerate(classifierM.parameters()):
                         if p.grad is not None:
                             assert p.grad.shape == classifier_gradients[i].shape
                             p.grad += classifier_gradients[i]
-                    print('classifier model')
                     classifierO.step()
 
                 if args.train_discriminator:
@@ -293,6 +297,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
                 if args.save_steps > 0 and (update_step + 1) % args.save_steps == 0:
 
+                    # TODO make sure save models works
                     assert save_models(args, update_step, generatorM, classifierM, discriminatorM) == -1
 
                     if args.evaluate_during_training:
@@ -300,6 +305,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
         epoch_iterator.close()
     train_iterator.close()
+
 
 def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, test=False):
     results = {}
@@ -412,6 +418,10 @@ def main():
 
             self.classifier_model_type = 'roberta-reinforce'
             self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/saved/roberta-base/'
+            # self.classifier_model_name = None
+            self.classifier_embedding_dim = 50
+            self.classifier_hidden_dim = 512
+            self.classifier_num_layers = 2
 
             self.discriminator_model_type = 'lstm-reinforce'
             self.discriminator_model_name = None
@@ -439,13 +449,15 @@ def main():
             self.learning_rate_classifier = 9e-5
             self.learning_rate_generator = 9e-6
             self.do_train = True
-            self.batch_size = 2
+            self.batch_size = 4
             self.save_steps = 10
             self.essential_mu_p = 0.20
-            self.use_corpus = True
-            self.accumulation_steps = 25
-            self.train_classifier = False
-            self.train_discriminator = False
+            self.use_corpus = False
+            self.accumulation_steps = 20
+            self.train_classifier = True
+            self.train_discriminator = True
+            self.reinforce_action_method = 'sample'
+            self.reinforce_gamma = 0.8
 
     args = Args()
 
@@ -515,7 +527,7 @@ def main():
         # attention_masks [n, 4, max_length] and labels [n, 4]
         dataset = load_and_cache_features(args, tokenizer, 'train')
 
-        train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM)
+        train(args, dataset, generatorM, attentionM, classifierM, discriminatorM)
 
     if args.do_evaluate_dev:
         models_checkpoints = load_models(args, tokenizer)
@@ -528,6 +540,7 @@ def main():
             classifierM.to(args.device)
 
             assert -1 == evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
+
 
 if __name__ == '__main__':
     main()
