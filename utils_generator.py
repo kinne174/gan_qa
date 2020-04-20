@@ -332,6 +332,8 @@ class GeneratorReinforcement(nn.Module):
     def __init__(self):
         super(GeneratorReinforcement, self).__init__()
 
+        self.sigmoid = nn.Sigmoid()
+
     def save_pretrained(self, save_directory):
         self.model.save_pretrained(save_directory)
 
@@ -354,6 +356,8 @@ class GeneratorReinforcement(nn.Module):
                                    token_type_ids=token_type_ids.view(-1, token_type_ids.shape[-1]) if token_type_ids is not None else None)
 
         prediction_scores = model_outputs[0]
+        prediction_scores = self.sigmoid(prediction_scores)
+        prediction_scores = prediction_scores.view(-1, 4, *prediction_scores.shape[1:])
 
         return prediction_scores
 
@@ -370,6 +374,6 @@ generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
     'roberta': (RobertaConfig, MyRobertaForMaskedLM),
     'albert': (AlbertConfig, MyAlbertForMaskedLM),
-    'robeta-reinforcement': (RobertaConfig, MyRobertaForMaskedLMReinforcement)
+    'roberta-reinforce': (RobertaConfig, MyRobertaForMaskedLMReinforcement)
 }
 
