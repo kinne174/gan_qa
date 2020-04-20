@@ -38,7 +38,6 @@ def main():
         parser.add_argument('--overwrite_output_file', action='store_true',
                             help='Overwrite the output directory')
 
-
         args = parser.parse_args()
     else:
         class Args(object):
@@ -54,6 +53,9 @@ def main():
     common_words = Counter()
     all_valid_inds = []
     num_all_sentences = 0
+
+    if not os.path.exists(args.output_dir):
+        raise Exception('The output director does not exist! {}'.format(args.output_dir))
 
     output_filename = os.path.join(args.output_dir, 'lm_sentences_{}.txt'.format('-'.join(args.domain_words)))
     if os.path.exists(output_filename) and not args.overwrite_output_file:
@@ -105,7 +107,7 @@ def main():
                     if len(all_valid_sentences) % 1000 == 0:
                         print('The number of sentences in step {} is {}'.format(i+1, len(all_valid_sentences)))
 
-                    if args.output_cutoff is not None and len(all_valid_sentences) >= args.output_cutoff:
+                    if args.output_cutoff is not None and (num_all_sentences + len(all_valid_sentences)) >= args.output_cutoff:
                         break
 
                 if args.corpus_cutoff is not None and line_ind >= args.corpus_cutoff:

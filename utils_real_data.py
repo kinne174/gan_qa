@@ -117,7 +117,7 @@ def example_loader(args, subset):
         top_words = counter.most_common(10+len(args.domain_words))
         keywords_list = [t[0] for t in top_words if t[0] not in args.domain_words]
         keywords_dict = {kw: [] for kw in keywords_list}
-        logger_ind = len(all_examples)//1000
+        logger_ind = len(all_examples) // 1000
 
         data_filename = '../ARC/ARC-V1-Feb2018-2/ARC_Corpus.txt'
         with codecs.open(data_filename, 'r', encoding='utf-8', errors='ignore') as corpus:
