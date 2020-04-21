@@ -190,9 +190,12 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
                 pad_index = len(attention_list) - 1
 
             real_ids = inputs['input_ids'][i, j, :pad_index]
-            fake_ids = fake_inputs['inputs_embeds'].nonzero()
-            fake_ids = fake_ids[:, 1].view(*fake_inputs['input_ids'].shape)
-            fake_ids = fake_ids[i, j, :pad_index].long()
+            if 'inputs_embeds' in fake_inputs:
+                fake_ids = fake_inputs['inputs_embeds'].nonzero()
+                fake_ids = fake_ids[:, 1].view(*fake_inputs['input_ids'].shape)
+                fake_ids = fake_ids[i, j, :pad_index].long()
+            else:
+                fake_ids = fake_inputs['input_ids'][i, j, :pad_index]
 
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
             fake_words = tokenizer.convert_ids_to_tokens(fake_ids)
