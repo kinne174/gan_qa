@@ -59,7 +59,7 @@ def select_field(features, field):
 
 def detach_inputs(fake_inputs, inputs):
     assert 'input_ids' in fake_inputs and 'input_ids' in inputs
-    assert 'inputs_embeds' in fake_inputs
+    # assert 'inputs_embeds' in fake_inputs
 
     fake_inputs = {k: v.detach() if hasattr(v, 'detach') else v for k, v in fake_inputs.items()}
     inputs = {k: v.detach() if hasattr(v, 'detach') else v for k, v in inputs.items()}
@@ -219,49 +219,52 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 classifierM.train()
                 discriminatorM.train()
 
-                # this changes the 'my_attention_masks' input to highlight which words should be changed
+
+            # this changes the 'my_attention_masks' input to highlight which words should be changed
                 fake_inputs = attentionM(**inputs)
-
-                # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier, already dividing by sum in utils_classifier
-                fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
-                fake_inputs = generatorM(**fake_inputs)
-
-                # flip labels to represent the wrong answers are actually right
-                fake_inputs = flip_labels(**fake_inputs)
-
-                # get the predictions of which answers are the correct pairing from the classifier
                 fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
 
-                predictions_g_c, errorG_c = classifierM(**fake_inputs)
-                predictions_g_d, errorG_d = discriminatorM(**fake_inputs)
+                if not args.no_generator_error:
 
-                if all((errorG_c, errorG_d)) is None:
-                    logger.warning('ErrorG and ErrorC is None!')
-                    raise Exception('ErrorG and ErrorC is None!')
+                    # this changes the 'input_ids' based on the 'my_attention_mask' input to generate words to fool classifier, already dividing by sum in utils_classifier
+                    fake_inputs = generatorM(**fake_inputs)
 
-                # based on the loss function update the parameters within the generator/ attention model
+                    # flip labels to represent the wrong answers are actually right
+                    fake_inputs = flip_labels(**fake_inputs)
 
-                #errorG_c is classification error, errorG_d is discriminator error
-                if errorG_c is not None:
-                    num_training_correct_generator_classifier += torch.sum(torch.eq(torch.argmin(fake_inputs['classification_labels'][fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1),
-                                                                           torch.argmin(predictions_g_c[fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
-                                                                           dtype=torch.int).detach().cpu()
+                    # get the predictions of which answers are the correct pairing from the classifier
+                    fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
 
-                    errorG_c /= args.minibatch_size
-                    errorG_c.backward(retain_graph=True)
+                    predictions_g_c, errorG_c = classifierM(**fake_inputs)
+                    predictions_g_d, errorG_d = discriminatorM(**fake_inputs)
 
-                    minibatch_error_generator_c += errorG_c.detach().item()
+                    if all((errorG_c, errorG_d)) is None:
+                        logger.warning('ErrorG and ErrorC is None!')
+                        raise Exception('ErrorG and ErrorC is None!')
 
-                num_training_correct_generator_discriminator += int(torch.sum(torch.eq(fake_inputs['discriminator_labels'], predictions_g_d.sign())[fake_inputs['my_attention_mask'].nonzero(as_tuple=True)], dtype=torch.int).detach().cpu())
+                    # based on the loss function update the parameters within the generator/ attention model
 
-                errorG_d /= args.minibatch_size
-                errorG_d.backward()
+                    #errorG_c is classification error, errorG_d is discriminator error
+                    if errorG_c is not None:
+                        num_training_correct_generator_classifier += torch.sum(torch.eq(torch.argmin(fake_inputs['classification_labels'][fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1),
+                                                                               torch.argmin(predictions_g_c[fake_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
+                                                                               dtype=torch.int).detach().cpu()
 
-                minibatch_error_generator_d += errorG_d.detach().item()
+                        errorG_c /= args.minibatch_size
+                        errorG_c.backward(retain_graph=True)
 
-                # zero out classifier and discriminator so they do not accumulate these gradients
-                classifierM.zero_grad()
-                discriminatorM.zero_grad()
+                        minibatch_error_generator_c += errorG_c.detach().item()
+
+                    num_training_correct_generator_discriminator += int(torch.sum(torch.eq(fake_inputs['discriminator_labels'], predictions_g_d.sign())[fake_inputs['my_attention_mask'].nonzero(as_tuple=True)], dtype=torch.int).detach().cpu())
+
+                    errorG_d /= args.minibatch_size
+                    errorG_d.backward()
+
+                    minibatch_error_generator_d += errorG_d.detach().item()
+
+                    # zero out classifier and discriminator so they do not accumulate these gradients
+                    classifierM.zero_grad()
+                    discriminatorM.zero_grad()
 
                 # print('generator model')
                 # for i in range(len(list(generatorM.parameters()))):
@@ -376,20 +379,22 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                                                                                                                            minibatch_error_fake_d +
                                                                                                                            minibatch_error_real_d)
 
-            if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
-                raise Exception(
-                    'There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(
-                        epoch, batch_iterate))
-            if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in
-                    range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
-                logger.warning(
-                    'There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(
-                        epoch,
-                        batch_iterate))
-                # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
+            if not args.no_generator_error:
+                if all([list(generatorM.parameters())[i].grad is None for i in range(len(list(generatorM.parameters())))]):
+                    raise Exception(
+                        'There is no gradient parameters for the generator (all None) in epoch {} iteration {}!'.format(
+                            epoch, batch_iterate))
+                if any([torch.max(torch.abs(list(generatorM.parameters())[i].grad)) == 0 for i in
+                        range(len(list(generatorM.parameters()))) if list(generatorM.parameters())[i].grad is not None]):
+                    logger.warning(
+                        'There is some zero gradient parameters for the generator in epoch {} iteration {}!'.format(
+                            epoch,
+                            batch_iterate))
+                    # raise Exception('There is all zero gradient parameters for the generator in epoch {} iteration {}!'.format(epoch, iterate))
 
             # Update generatorM parameters
-            generatorO.step()
+            if not args.no_generator_error:
+                generatorO.step()
 
             if len(classifier_gradients):
                 if all([list(classifierM.parameters())[i].grad is None for i in
@@ -406,12 +411,10 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
             # update classifier/discriminator parameters
             if not args.no_classification_error and len(classifier_gradients):
-                print('classifier model')
                 for i, p in enumerate(classifierM.parameters()):
                     if p.grad is not None:
                         assert p.grad.shape == classifier_gradients[i].shape
                         p.grad += classifier_gradients[i]
-                print('classifier model')
                 classifierO.step()
 
             if not args.no_discriminator_error:
@@ -656,7 +659,6 @@ def main():
                             help='Epsilon of classifier for Adam optimizer')
         parser.add_argument('--epsilon_generator', default=1e-8, type=float,
                             help='Epsilon of generator for Adam optimizer')
-        # TODO do some annealing with this min_temperature on gumbel softmax
         parser.add_argument('--min_temperature', default=.5, type=float,
                             help='Minimum temperature for annealing')
         parser.add_argument('--save_steps', default=50, type=int,
@@ -687,6 +689,7 @@ def main():
                 self.cache_dir = 'saved/'
                 self.tokenizer_name = 'roberta-base'
                 self.generator_model_type = 'roberta'
+                # self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/moon_roberta-base/'
                 self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/moon_roberta-base/'
                 # self.generator_model_name = 'roberta-base'
                 self.classifier_model_type = 'roberta'
@@ -711,28 +714,29 @@ def main():
                 self.max_length = 256
                 self.batch_size = 2
                 self.do_lower_case = True
-                self.save_steps = 10
+                self.save_steps = 5
                 self.essential_terms_hidden_dim = 512
-                self.essential_mu_p = 0.20
+                self.essential_mu_p = 0.25
                 self.use_corpus = False
                 self.evaluate_all_models = False
                 self.do_ablation_classifier = True
-                self.do_ablation_discriminator = True
+                self.do_ablation_discriminator = False
                 self.domain_words = ['moon', 'earth']
                 self.minibatch_size = 25
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
                 self.no_classification_error = False
                 self.no_discriminator_error = False
+                self.no_generator_error = False
                 self.discriminator_model_type = 'lstm'
-                # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-roberta-moon_earth/roberta-discriminator-60/'
+                # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-roberta-moon_earth/saved/0/roberta-discriminator/'
                 self.discriminator_model_name = None
                 self.discriminator_embedding_type = None
                 self.discriminator_embedding_dim = 50
                 self.discriminator_hidden_dim = 512
                 self.discriminator_num_layers = 2
                 self.discriminator_dropout = 0.10
-                self.do_prevaluation = False
+                self.do_prevaluation = True
 
         args = Args()
 
