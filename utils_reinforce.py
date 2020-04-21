@@ -47,6 +47,7 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
 
     return loss, fake_input_ids, (logits_discriminator, logits_classifier)
 
+
 def train_classifier_discriminator(args, fake_input_ids, real_input_ids, attention_mask, my_attention_mask,
                                    token_type_ids, classification_labels, sentences_type, discriminatorM, classifierM):
 
