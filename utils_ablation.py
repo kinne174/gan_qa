@@ -91,9 +91,12 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
                 pad_index = len(attention_list) - 1
 
             real_ids = inputs['input_ids'][i, j, seq_end_index:pad_index]
-            fake_ids = fake_inputs['inputs_embeds'].nonzero()
-            fake_ids = fake_ids[:, 1].view(*fake_inputs['input_ids'].shape)
-            fake_ids = fake_ids[i, j, seq_end_index:pad_index].long()
+            if 'inputs_embeds' in fake_inputs:
+                fake_ids = fake_inputs['inputs_embeds'].nonzero()
+                fake_ids = fake_ids[:, 1].view(*fake_inputs['input_ids'].shape)
+                fake_ids = fake_ids[i, j, seq_end_index:pad_index].long()
+            else:
+                fake_ids = fake_inputs['input_ids'][i, j, seq_end_index:pad_index]
 
             real_words = tokenizer.convert_ids_to_tokens(real_ids)
             fake_words = tokenizer.convert_ids_to_tokens(fake_ids)
@@ -121,7 +124,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
             all_real_words.append(new_real_words)
 
         current_real_label = inputs['classification_labels'][i, :]
-        current_fake_label = fake_inputs['classification_labels'][i, :]
+        current_fake_label = 1- current_real_label
         correct_real_label = ['  ' if lab == 0 else '*r' for lab in current_real_label]
         correct_fake_label = ['  ' if lab == 1 else '*f' for lab in current_fake_label]
 
