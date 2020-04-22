@@ -107,18 +107,13 @@ class AttentionEssentialReinforce(nn.Module):
         return cls(config)
 
     def forward(self, input_ids, my_attention_mask):
-        # all_attention_mask = kwargs['my_attention_mask']
         out_my_attention_mask = my_attention_mask[:, :, :my_attention_mask.shape[-1] // 2]
-        # all_tokenizer_attention_mask = kwargs['attention_mask']
-
-        # all_input_ids = kwargs['input_ids']
+        out_masked_input_ids = input_ids.clone()
 
         for k in range(out_my_attention_mask.shape[0]):
             for j in range(out_my_attention_mask.shape[1]):
                 current_my_attention_mask = my_attention_mask[k, j, :my_attention_mask.shape[-1] // 2].squeeze()
                 shared_tokens = my_attention_mask[k, j, my_attention_mask.shape[-1] // 2:].squeeze().long()
-
-                # current_input_ids = input_ids[k, j, :]
 
                 non_zero_indices = current_my_attention_mask.nonzero().reshape((-1))
 
@@ -143,18 +138,16 @@ class AttentionEssentialReinforce(nn.Module):
                     # weighted_perm, _ = map(list, zip(*non_zero_and_probs))
 
 
-                indices_to_mask = weighted_perm[:num_to_mask]
+                indices_to_mask = torch.tensor(weighted_perm[:num_to_mask]).to(input_ids.device)
                 # shared_tokens_to_mask = [shared_tokens[itm].item() for itm in indices_to_mask]
                 # indices_to_mask = [i for i in range(shared_tokens.shape[0]) if shared_tokens[i] in shared_tokens_to_mask]
 
-                for i, id in enumerate(input_ids[k, j, :]):
-                    if i in indices_to_mask:
-                        input_ids[k, j, i] = self.mask_id
+                out_masked_input_ids[k, j, :].scatter_(0, indices_to_mask, self.mask_id)
 
-                for i in range(current_my_attention_mask.shape[0]):
-                    out_my_attention_mask[k, j, i] = 1 if i in indices_to_mask else 0
+                out_my_attention_mask[k, j, :] = torch.zeros_like(out_my_attention_mask[k, j, :]).scatter_(0, indices_to_mask, 1)
 
-        return input_ids, out_my_attention_mask, -1 * out_my_attention_mask
+        return out_masked_input_ids, out_my_attention_mask, -1 * out_my_attention_mask
+
 
 class AttentionConfig(PretrainedConfig):
     def __init__(self, **kwargs):
