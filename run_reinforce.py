@@ -151,6 +151,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
     classifierM.zero_grad()
     discriminatorM.zero_grad()
 
+    if args.do_prevaluation:
+        assert -1 == evaluate(args, classifierM, generatorM, attentionM, tokenizer, 0)
+
     logger.info('Starting to train!')
     logger.info('There are {} examples.'.format(len(dataset)))
     logger.info('There will be {} iterations.'.format(len(dataset) // (args.batch_size * args.accumulation_steps) + 1))
@@ -170,12 +173,12 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
         accumulated_error_real_c = 0
 
+        # gradient parameters for classifier and discriminator
+        classifier_gradients = []
+        discriminator_gradients = []
+
         for batch_iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, batch_iterate))
-
-            # gradient parameters for classifier and discriminator
-            classifier_gradients = []
-            discriminator_gradients = []
 
             batch = tuple(t.to(args.device) for t in batch)
             real_inputs = {'input_ids': batch[0],
@@ -196,6 +199,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
             # this changes the 'my_attention_masks' input to highlight which words should be changed
             masked_input_ids, my_attention_mask, fake_discriminator_labels = attentionM(real_inputs['input_ids'], real_inputs['my_attention_mask'])
+            assert not torch.all(torch.eq(masked_input_ids, real_inputs['input_ids']))
 
             # flip labels to represent the wrong answers are actually right
             fake_classification_labels, real_discriminator_labels = \
@@ -203,15 +207,16 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                             discriminator_labels=fake_discriminator_labels)
 
             generator_loss, fake_input_ids, (logits_gen_d, logits_gen_c) = train_generator(args,
-                                                                                                          masked_input_ids,
-                                                                                                          real_inputs['attention_mask'],
-                                                                                                          my_attention_mask,
-                                                                                                          real_inputs['token_type_ids'],
-                                                                                                          real_inputs['classification_labels'],
-                                                                                                          real_inputs['sentences_type'],
-                                                                                                          generatorM,
-                                                                                                          classifierM,
-                                                                                                          discriminatorM)
+                                                                                           masked_input_ids,
+                                                                                           real_inputs['attention_mask'],
+                                                                                           my_attention_mask,
+                                                                                           real_inputs['token_type_ids'],
+                                                                                           real_inputs['classification_labels'],
+                                                                                           real_inputs['sentences_type'],
+                                                                                           generatorM,
+                                                                                           classifierM,
+                                                                                           discriminatorM,
+                                                                                           update_step)
 
             # assign fake_input_ids to fake_inputs
             fake_input_ids = fake_input_ids.to(args.device)
@@ -225,12 +230,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 torch.eq(my_attention_mask, tanh(logits_gen_d).sign())[
                     my_attention_mask.nonzero(as_tuple=True)], dtype=torch.int).detach().cpu())
 
-            num_training_correct_generator_classifier += torch.sum(torch.eq(
-                torch.argmin((1 - real_inputs['classification_labels'])[real_inputs['sentences_type'].nonzero().squeeze()],
-                             dim=-1),
-                torch.argmin(logits_gen_c[real_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
-                                                                   dtype=torch.int).detach().cpu()
-
             # print('generator model')
             # generator_grads = [p.grad for p in generatorM.parameters()]
             # for i in range(len(generator_grads)):
@@ -243,53 +242,65 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
             classifierM.zero_grad()
             discriminatorM.zero_grad()
 
+            classifierM.train()
+            discriminatorM.train()
+
             # detach the inputs so the gradient graphs don't reach back, only need them for discriminator/ classifier
             fake_input_ids, my_attention_mask = detach_inputs([fake_input_ids, my_attention_mask])
 
-            (logits_real_c, logits_real_d, logits_fake_d), (error_real_c, error_real_d, error_fake_d) = \
-                train_classifier_discriminator(args, fake_input_ids, real_inputs['input_ids'], real_inputs['attention_mask'],
+            logits, errors = train_classifier_discriminator(args, fake_input_ids, real_inputs['input_ids'], real_inputs['attention_mask'],
                                                my_attention_mask, real_inputs['token_type_ids'], real_inputs['classification_labels'],
                                                real_inputs['sentences_type'], discriminatorM, classifierM)
 
             # error_real_c is classification error, error_real_d is discriminator error
-            if error_real_c is not None:
-                error_real_c /= args.accumulation_steps  # already dividing by sum in utils_classifier
-                error_real_c.backward()
+            if errors['error_real_c'] is not None:
+                errors['error_real_c'] /= (args.accumulation_steps / 0.5)  # already dividing by sum in utils_classifier
+                errors['error_real_c'] /= args.accumulation_steps  # already dividing by sum in utils_classifier
+                errors['error_real_c'].backward()
 
-                accumulated_error_real_c += error_real_c.detach().item()
+                accumulated_error_real_c += errors['error_real_c'].detach().item()
+
+                errors['error_fake_c'] /= (args.accumulation_steps / 0.5)
+                errors['error_fake_c'].backward()
 
                 num_classification_seen += sum(real_inputs['sentences_type'])
                 num_training_correct_real_classifier += torch.sum(
                     torch.eq(torch.argmax(real_inputs['classification_labels'][real_inputs['sentences_type'].nonzero().squeeze()],
                                           dim=-1),
-                             torch.argmax(logits_real_c[real_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
+                             torch.argmax(logits['logits_real_c'][real_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
+                    dtype=torch.int).detach().cpu()
+                num_training_correct_generator_classifier += torch.sum(torch.eq(
+                    torch.argmin(
+                        (1 - real_inputs['classification_labels'])[real_inputs['sentences_type'].nonzero().squeeze()],
+                        dim=-1),
+                    torch.argmin(logits_gen_c[real_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                     dtype=torch.int).detach().cpu()
 
             num_discriminator_seen += int(my_attention_mask.nonzero().shape[0])
 
-            if error_real_d is not None:
-                error_real_d /= args.accumulation_steps
-                error_real_d.backward()
+            if errors['error_real_d'] is not None:
+                errors['error_real_d'] /= (args.accumulation_steps / 0.5)
+                errors['error_real_d'].backward()
 
-                accumulated_error_real_d += error_real_d.detach().item()
+                accumulated_error_real_d += errors['error_real_d'].detach().item()
 
                 num_training_correct_real_discriminator += int(torch.sum(
-                    torch.eq(my_attention_mask, tanh(logits_real_d).sign())[
+                    torch.eq(my_attention_mask, tanh(logits['logits_real_d']).sign())[
                         my_attention_mask.nonzero(as_tuple=True)], dtype=torch.int).detach().cpu())
 
-            if error_fake_d is not None:
-                error_fake_d /= args.accumulation_steps
-                error_fake_d.backward()
+            if errors['error_fake_d'] is not None:
+                errors['error_fake_d'] /= (args.accumulation_steps / 0.5)
+                errors['error_fake_d'].backward()
 
-                accumulated_error_fake_d += error_fake_d.detach().item()
+                accumulated_error_fake_d += errors['error_fake_d'].detach().item()
 
                 num_training_correct_fake_discriminator += int(torch.sum(
-                    torch.eq(-1*my_attention_mask, tanh(logits_fake_d).sign())[
+                    torch.eq(-1*my_attention_mask, tanh(logits['logits_fake_d']).sign())[
                         my_attention_mask.nonzero(as_tuple=True)], dtype=torch.int).detach().cpu())
 
             # save gradient parameters in a list
             # for classifier
-            if args.train_classifier and error_real_c is not None:
+            if args.train_classifier and errors['error_real_c'] is not None:
                 if not len(classifier_gradients):
                     for p in classifierM.parameters():
                         if p.grad is not None:
@@ -332,13 +343,16 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                     accumulated_error_fake_d +
                     accumulated_error_real_d)
 
-                messages['message_classifier_real_running_total_correct'] = '\treal Classification is {} out of {} for a percentage of {:.3f}'.format(
-                        num_training_correct_real_classifier, num_classification_seen,
-                        num_training_correct_real_classifier / float(num_classification_seen))
+                if num_classification_seen:
+                    messages['message_classifier_real_running_total_correct'] = '\treal Classification is {} out of {} for a percentage of {:.3f}'.format(
+                            num_training_correct_real_classifier, num_classification_seen,
+                            num_training_correct_real_classifier / float(num_classification_seen))
 
-                messages['message_classifier_generator_running_total_correct'] = '\tGenerator Classification is {} out of {} for a percentage of {:.3f}'.format(
-                        num_training_correct_generator_classifier, num_classification_seen,
-                        num_training_correct_generator_classifier / float(num_classification_seen))
+                    messages['message_classifier_generator_running_total_correct'] = '\tGenerator Classification is {} out of {} for a percentage of {:.3f}'.format(
+                            num_training_correct_generator_classifier, num_classification_seen,
+                            num_training_correct_generator_classifier / float(num_classification_seen))
+                else:
+                    messages['message_classifier'] = '\tNo multiple choice labels seen yet.'
 
                 messages[
                     'message_generator_discriminator_running_total_correct'] = '\tGenerator Discriminator is {} out of {} for a percentage of {:.3f}'.format(
@@ -365,6 +379,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                         logger.info(m)
                         print(m)
 
+                accumulated_error_real_d = 0
+                accumulated_error_fake_d = 0
+                accumulated_error_generator = 0
+
+                accumulated_error_real_c = 0
 
                 if args.train_generator:
                     # Update generatorM parameters
@@ -377,6 +396,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                             assert p.grad.shape == classifier_gradients[i].shape
                             p.grad += classifier_gradients[i]
                     classifierO.step()
+                    classifier_gradients = []
 
                 if args.train_discriminator:
                     for i, p in enumerate(discriminatorM.parameters()):
@@ -384,6 +404,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                             assert p.grad.shape == discriminator_gradients[i].shape
                             p.grad += discriminator_gradients[i]
                     discriminatorO.step()
+                    discriminator_gradients = []
 
                 # zero out networks
                 classifierM.zero_grad()
@@ -398,22 +419,25 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
                     ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}_{}.txt'.format(update_step, '-'.join(
                         args.domain_words)))
+                    if os.path.exists(ablation_filename):
+                        os.remove(ablation_filename)
+
                     ablation_fake_inputs = {'input_ids': fake_input_ids,
                                             'my_attention_mask': my_attention_mask}
                     ablation_real_inputs = {'input_ids': real_inputs['input_ids'],
                                             'attention_mask': real_inputs['attention_mask']}
+
                     ablation_discriminator(args, ablation_filename, tokenizer, ablation_fake_inputs, ablation_real_inputs,
-                                           tanh(logits_fake_d), tanh(logits_real_d), tanh(logits_gen_d))
+                                           tanh(logits['logits_fake_d']), tanh(logits['logits_real_d']), tanh(logits_gen_d))
 
                 update_step += 1
 
                 if args.save_steps > 0 and (update_step + 1) % args.save_steps == 0:
 
-                    # TODO make sure save models works
-                    assert save_models(args, update_step, generatorM, classifierM, discriminatorM) == -1
+                    assert save_models(args, update_step+1, generatorM, classifierM, discriminatorM) == -1
 
                     if args.evaluate_during_training:
-                        assert evaluate(args, classifierM, generatorM, attentionM, tokenizer, update_step)
+                        assert evaluate(args, classifierM, generatorM, attentionM, tokenizer, update_step+1)
 
         epoch_iterator.close()
     train_iterator.close()
@@ -423,10 +447,26 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
     results = {}
     subset = 'test' if test else 'dev'
 
+    # change models to eval
+    classifierM.eval()
+    generatorM.eval()
+    attentionM.eval()
+
     eval_dataset = load_and_cache_features(args, tokenizer, subset)
 
     eval_sampler = SequentialSampler(eval_dataset)
-    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=min(args.batch_size, 100))
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.batch_size)
+
+    if args.do_ablation_classifier:
+        ablation_dir = os.path.join(args.output_dir, 'ablation_{}'.format(subset))
+
+        if not os.path.exists(ablation_dir):
+            os.makedirs(ablation_dir)
+
+        ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}_{}.txt'.format(checkpoint, '-'.join(args.domain_words)))
+
+        if os.path.exists(ablation_filename):
+            os.remove(ablation_filename)
 
     logger.info('Starting Evaluation!')
     logger.info('Number of examples: {}'.format(len(eval_dataset)))
@@ -479,16 +519,23 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
             real_loss += torch.sum(real_error).item()
             fake_loss += torch.sum(fake_error).item()
 
-        if all_real_predictions is None:
-            all_real_predictions = real_predictions.detach().cpu().numpy()
-            all_fake_predictions = fake_predictions.detach().cpu().numpy()
-            all_labels = inputs['classification_labels'].detach().cpu().numpy()
-        else:
-            all_real_predictions = np.append(all_real_predictions, real_predictions.detach().cpu().numpy(), axis=0)
-            all_fake_predictions = np.append(all_fake_predictions, fake_predictions.detach().cpu().numpy(), axis=0)
-            all_labels = np.append(all_labels, inputs['classification_labels'].detach().cpu().numpy(), axis=0)
+            if all_real_predictions is None:
+                all_real_predictions = real_predictions.detach().cpu().numpy()
+                all_fake_predictions = fake_predictions.detach().cpu().numpy()
+                all_labels = inputs['classification_labels'].detach().cpu().numpy()
+            else:
+                all_real_predictions = np.append(all_real_predictions, real_predictions.detach().cpu().numpy(), axis=0)
+                all_fake_predictions = np.append(all_fake_predictions, fake_predictions.detach().cpu().numpy(), axis=0)
+                all_labels = np.append(all_labels, inputs['classification_labels'].detach().cpu().numpy(), axis=0)
 
-        num_steps += 1
+            if args.do_ablation_classifier:  # and batch_ind in ablation_indices:
+                ablation_fake_inputs = {'input_ids': fake_input_ids,
+                                        'my_attention_mask': my_attention_mask,
+                                        'classification_labels': inputs['classification_labels']}
+                assert -1 == ablation(args, ablation_filename, tokenizer, ablation_fake_inputs, inputs,
+                                      real_predictions, fake_predictions)
+
+            num_steps += 1
 
     real_eval_loss = real_loss / num_steps
     fake_eval_loss= fake_loss / num_steps
@@ -527,7 +574,8 @@ def main():
             self.transformer_name = 'roberta'
             self.tokenizer_name = 'roberta-base'
             self.generator_model_type = 'roberta-reinforce'
-            self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/moon_roberta-base/'
+            self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/rock_roberta-base/'
+            # self.generator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-moon_earth/roberta-generator-25/'
             self.attention_model_type = 'essential-reinforce'
 
             self.classifier_model_type = 'roberta-reinforce'
@@ -538,6 +586,7 @@ def main():
             self.classifier_num_layers = 2
 
             self.discriminator_model_type = 'lstm-reinforce'
+            # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-moon_earth/roberta-discriminator-25/'
             self.discriminator_model_name = None
             self.discriminator_embedding_type = None
             self.discriminator_embedding_dim = 50
@@ -545,7 +594,7 @@ def main():
             self.discriminator_num_layers = 2
             self.discriminator_dropout = 0.10
 
-            self.epochs = 5
+            self.epochs = 6
             self.cutoff = None
             self.do_evaluate_test = False
             self.do_evaluate_dev = True
@@ -559,22 +608,24 @@ def main():
             self.evaluate_all_models = False
             self.quiet = False
 
-            self.domain_words = ['moon', 'earth']
+            self.domain_words = ['all']
             self.evaluate_during_training = True
             self.learning_rate_classifier = 9e-5
             self.learning_rate_generator = 9e-6
             self.do_train = True
-            self.batch_size = 5
-            self.save_steps = 10
-            self.essential_mu_p = 0.20
+            self.batch_size = 6
+            self.save_steps = 8
+            self.essential_mu_p = 0.30
             self.use_corpus = False
-            self.accumulation_steps = 20
+            self.accumulation_steps = 15
             self.train_classifier = True
             self.train_discriminator = True
             self.train_generator = True
-            self.reinforce_action_method = 'sample'
             self.reinforce_gamma = 0.8
             self.do_ablation_discriminator = True
+            self.do_ablation_classifier = True
+            self.do_prevaluation = True
+            self.sampling_annealing_rate = -0.05
 
     args = Args()
 
