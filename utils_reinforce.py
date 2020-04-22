@@ -1,19 +1,21 @@
 import torch
 import torch.nn as nn
-import os
 import logging
-import numpy as np
-import json
-import random
+import math
 
+# logger
 logger = logging.getLogger(__name__)
 
+# sigmoid
 sigmoid = nn.Sigmoid()
 
+
 def train_generator(args, input_ids, attention_mask, my_attention_mask, token_type_ids, classification_labels,
-                    sentences_type, generatorM, classifierM, discriminatorM):
+                    sentences_type, generatorM, classifierM, discriminatorM, update_step):
 
     generatorM.train()
+    classifierM.eval()
+    discriminatorM.eval()
 
     # input_ids = fake_inputs['input_ids']
     # attention_mask = fake_inputs['attention_mask']
@@ -27,25 +29,51 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
     fake_vocabulary_probs = generatorM(input_ids, attention_mask, token_type_ids)
     # fake_vocabulary_probs = fake_vocabulary_probs.view(-1, fake_vocabulary_probs.shape[2], fake_vocabulary_probs.shape[3])
 
+    # best_rewards_classifier = 1e10 * torch.ones((1, input_ids.shape[0]))
+    # best_index = [None] * input_ids.shape[0]
+    # all_loss = []
+    # all_fake_input_ids = []
+    # all_logits_discriminator = []
+    # all_logits_classifier = []
+    # for i in range(1):
     # choose words at random or argmax or based on probability
-    fake_action = word_index_selector(fake_vocabulary_probs, args.reinforce_action_method)
+    if torch.rand(1).item() < math.exp((update_step+1)*args.sampling_annealing_rate):
+        fake_action = word_index_selector(fake_vocabulary_probs, 'argmax')
+    else:
+        fake_action = word_index_selector(fake_vocabulary_probs, 'sample')
     fake_input_ids = (my_attention_mask*fake_action + (1 - my_attention_mask)*input_ids).long()
     # throw fake_action to device
     fake_action = fake_action.to(args.device)
 
-    # score words with discriminator and classifier
-    logits_discriminator = discriminatorM(fake_input_ids)
-    logits_classifier = classifierM(fake_input_ids, attention_mask, token_type_ids)
+    with torch.no_grad():
+        # score words with discriminator and classifier
+        logits_discriminator = discriminatorM(fake_input_ids)
+        logits_classifier = classifierM(fake_input_ids, attention_mask, token_type_ids)
 
     rewards_discriminator = 2*sigmoid(logits_discriminator) - 1
     rewards_classifier = my_CrossEntropyLoss(logits_classifier, classification_labels.nonzero()[:, 1].long(), neg_one=False)
+    # False because the generator should be rewarded for fooling the classifier into selecting the wrong options
 
     # calculate errors
     # have to make sure to use fake_vocabulary_probs to get connection to generator, see eq 9 in scratch gan
     loss = discount_rewards(args, fake_vocabulary_probs, fake_action, my_attention_mask,
                             rewards_discriminator, sentences_type, rewards_classifier)
 
-    return loss, fake_input_ids, (logits_discriminator, logits_classifier)
+    return loss.sum(), fake_input_ids, (logits_discriminator, logits_classifier)
+
+        # if torch.any(rewards_classifier.detach().cpu() < best_rewards_classifier):
+        #     which_better = (rewards_classifier.detach().cpu() < best_rewards_classifier).nonzero().squeeze().tolist()
+        #     for wb in which_better:
+        #         best_index[wb] = i
+        #         best_rewards_classifier[0, wb] = rewards_classifier.detach().cpu()[wb]
+
+    #     all_loss.append(loss)
+    #     all_fake_input_ids.append(fake_input_ids)
+    #     all_logits_discriminator.append(logits_discriminator)
+    #     all_logits_classifier.append(logits_classifier)
+    #
+    # return all_loss[best_index[0]].sum(), all_fake_input_ids[best_index[0]], \
+    #        (all_logits_discriminator[best_index[0]], all_logits_classifier[best_index[0]])
 
 
 def train_classifier_discriminator(args, fake_input_ids, real_input_ids, attention_mask, my_attention_mask,
@@ -63,8 +91,15 @@ def train_classifier_discriminator(args, fake_input_ids, real_input_ids, attenti
         logits_real_c = classifierM(real_input_ids, attention_mask, token_type_ids)
         error_real_c = my_CrossEntropyLoss(logits_real_c, classification_labels.nonzero()[:, 1].long(), neg_one=True)
         error_real_c = torch.sum(sentences_type * error_real_c) / torch.sum(sentences_type)
+
+        logits_fake_c = classifierM(fake_input_ids, attention_mask, token_type_ids)
+        error_fake_c = my_CrossEntropyLoss(logits_fake_c, classification_labels.nonzero()[:, 1].long(), neg_one=True)
+        # True because the classifier should be rewarded for seeing through a poor generator attempt at adversarially
+        #  attacking the classifier
+        error_fake_c = torch.sum(sentences_type * error_fake_c) / torch.sum(sentences_type)
     else:
         logits_real_c, error_real_c = None, None
+        logits_fake_c, error_fake_c = None, None
 
     logits_real_d = discriminatorM(real_input_ids)
     # error_real_d = Wloss(logits_real_d, real_discriminator_labels, my_attention_mask, use_tanh=True)
@@ -76,14 +111,15 @@ def train_classifier_discriminator(args, fake_input_ids, real_input_ids, attenti
     error_fake_d = my_BinaryCrossEntropyLoss(logits_fake_d, my_attention_mask, neg_one=False)
     error_fake_d = torch.sum(error_fake_d[my_attention_mask.nonzero(as_tuple=True)]) / float(my_attention_mask.nonzero().shape[0])
 
-    return (logits_real_c, logits_real_d, logits_fake_d), (error_real_c, error_real_d, error_fake_d)
+    return {'logits_real_c': logits_real_c, 'logits_fake_c': logits_fake_c, 'logits_real_d': logits_real_d, 'logits_fake_d': logits_fake_d}, \
+           {'error_real_c': error_real_c, 'error_fake_c': error_fake_c, 'error_real_d': error_real_d, 'error_fake_d': error_fake_d}
 
 
 def word_index_selector(vocab_probs, method):
     # TODO should I be implenting an annealing completely random choice here?
     if method == 'argmax':
         # do argmax over the third dimension of the probabilities
-        out = torch.argmax(vocab_probs, -1)
+        out = torch.argmax(vocab_probs, dim=-1)
         assert out.shape == vocab_probs.shape[:-1], 'shape of outputted action should match [batch * 4 * max_length]'
         return out
     elif method == 'sample':
@@ -133,7 +169,7 @@ def discount_rewards(args, vocab_probs, action, my_attention_mask, rewards_d, se
 
     out = -1 * rewards_minus_mean * torch.log(probs_selected.view(-1, probs_selected.shape[-1])) * my_attention_mask
 
-    return torch.sum(out) / torch.sum(my_attention_mask)
+    return torch.sum(out, dim=-1) #/ torch.sum(my_attention_mask)
 
 
 def Wloss(preds, labels, my_attention_mask, use_tanh=False):
