@@ -11,6 +11,7 @@ from utils_discriminator import discriminator_models_and_config_classes
 # logging
 logger = logging.getLogger(__name__)
 
+
 def inititalize_models(args, tokenizer):
     generator_config_class, generator_model_class = generator_models_and_config_classes[args.generator_model_type]
     classifier_config_class, classifier_model_class = classifier_models_and_config_classes[args.classifier_model_type]
@@ -146,18 +147,33 @@ def load_models(args, tokenizer):
 
         assert len(classifier_folder) == len(generator_folder) == 1
 
-        generatorM = generator_model_class.from_pretrained(generator_folder[0], config=generator_folder[0], device=args.device)
-        classifierM = classifier_model_class.from_pretrained(classifier_folder[0], config=classifier_folder[0], device=args.device)
+        # roberta, albert, seq, roberta-reinforce
+        generator_model_dict = {'config': generator_folder[0]}
+        if args.generator_model_type in ['roberta', 'albert']:
+            generator_model_dict.update({'device': args.device})
+        if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce']:
+            generator_model_dict.update({'pretrained_model_name_or_path': generator_folder[0]})
+
+        # roberta, albert, linear-reinforce, roberta-reinforce
+        classifier_model_dict = {'config': classifier_folder[0],
+                                 'pretrained_model_name_or_path': classifier_folder[0]}
+        if args.classifier_model_type in ['roberta', 'albert']:
+            classifier_model_dict.update({'device': args.device})
+
+        generatorM = generator_model_class.from_pretrained(**generator_model_dict)
+        classifierM = classifier_model_class.from_pretrained(**classifier_model_dict)
 
         if not generatorM.model.config.output_hidden_states:
             generatorM.model.config.output_hidden_states = True
 
-        attention_config_dicts = {'essential': {'mu_p': args.essential_mu_p,
-                                                'mask_id': tokenizer.mask_token_id},}
-        attention_config = attention_config_class.from_pretrained(**attention_config_dicts[args.attention_model_type])
-        attention_model_dicts = {'essential': {'config': attention_config,
-                                               'device': args.device},}
-        attentionM = attention_model_class.from_pretrained(**attention_model_dicts[args.attention_model_type])
+        attention_config_dict = {'mu_p': args.essential_mu_p,
+                                 'mask_id': tokenizer.mask_token_id}
+        attention_config = attention_config_class.from_pretrained(**attention_config_dict)
+        # essential, essential-reinforce
+        attention_model_dict = {'config': attention_config}
+        if args.attention_model_type in ['essential']:
+            attention_model_dict.update({'device': args.device})
+        attentionM = attention_model_class.from_pretrained(**attention_model_dict)
 
         models_checkpoints.append(((attentionM, generatorM, classifierM), cp))
 
