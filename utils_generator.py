@@ -328,16 +328,46 @@ class MyRobertaForMaskedLM(GeneralModelforMaskedLM):
         return cls(pretrained_model_name_or_path, config, device)
 
 
+class ElementwiseMultiplication(nn.Module):
+    def __init__(self, num_features, bias):
+        super(ElementwiseMultiplication, self).__init__()
+        self.weight = nn.Parameter(torch.Tensor(num_features))
+
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(num_features))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        with torch.no_grad():
+            self.weight.normal_(0, math.sqrt(5))
+            if self.bias is not None:
+                self.bias.uniform_(-1*math.sqrt(5), math.sqrt(5))
+
+    def forward(self, x):
+        out = x * self.weight
+        if self.bias is not None:
+            out += self.bias
+        return out
+
+
 class GeneratorReinforcement(nn.Module):
-    def __init__(self):
+    def __init__(self, model):
         super(GeneratorReinforcement, self).__init__()
 
-        self.sigmoid = nn.Sigmoid()
+        self.softmax = nn.Softmax(dim=-1)
+        self.model = model
+
+        vocab_size = self.model.config.vocab_size
+        self.correct_elementwise = ElementwiseMultiplication(vocab_size, bias=True)
+        self.incorrect_elementwise = ElementwiseMultiplication(vocab_size, bias=True)
 
     def save_pretrained(self, save_directory):
         self.model.save_pretrained(save_directory)
 
-    def forward(self, input_ids, attention_mask, token_type_ids):
+    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels):
         if hasattr(self.model, 'roberta'):
             token_type_ids = None
         elif hasattr(self.model, 'albert'):
@@ -356,19 +386,24 @@ class GeneratorReinforcement(nn.Module):
                                    token_type_ids=token_type_ids.view(-1, token_type_ids.shape[-1]) if token_type_ids is not None else None)
 
         prediction_scores = model_outputs[0]
-        prediction_scores = self.sigmoid(prediction_scores)
         prediction_scores = prediction_scores.view(-1, 4, *prediction_scores.shape[1:])
+
+        prediction_scores = classification_labels.view(*classification_labels.shape, 1, 1) * self.correct_elementwise(prediction_scores) + \
+                        (1 - classification_labels).view(*classification_labels.shape, 1, 1) * self.incorrect_elementwise(prediction_scores)
+
+        prediction_scores = self.softmax(prediction_scores)
 
         return prediction_scores
 
+
 class MyRobertaForMaskedLMReinforcement(GeneratorReinforcement):
     def __init__(self, pretrained_model_name_or_path, config):
-        super(MyRobertaForMaskedLMReinforcement, self).__init__()
-        self.model = RobertaForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config)
+        super(MyRobertaForMaskedLMReinforcement, self).__init__(model=RobertaForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
+
 
 generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
