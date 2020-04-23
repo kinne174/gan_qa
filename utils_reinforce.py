@@ -2,16 +2,18 @@ import torch
 import torch.nn as nn
 import logging
 import math
+import numpy as np
 
 # logger
 logger = logging.getLogger(__name__)
 
-# sigmoid
+# sigmoid, softmax
 sigmoid = nn.Sigmoid()
+softmax = nn.Softmax(dim=-1)
 
 
 def train_generator(args, input_ids, attention_mask, my_attention_mask, token_type_ids, classification_labels,
-                    sentences_type, generatorM, classifierM, discriminatorM, update_step):
+                    sentences_type, generatorM, classifierM, discriminatorM, update_step, baseline):
 
     generatorM.train()
     classifierM.eval()
@@ -26,7 +28,7 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
 
     # draw fake probability for words
 
-    fake_vocabulary_probs = generatorM(input_ids, attention_mask, token_type_ids)
+    fake_vocabulary_probs = generatorM(input_ids, attention_mask, token_type_ids, classification_labels)
     # fake_vocabulary_probs = fake_vocabulary_probs.view(-1, fake_vocabulary_probs.shape[2], fake_vocabulary_probs.shape[3])
 
     # best_rewards_classifier = 1e10 * torch.ones((1, input_ids.shape[0]))
@@ -37,10 +39,11 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
     # all_logits_classifier = []
     # for i in range(1):
     # choose words at random or argmax or based on probability
-    if torch.rand(1).item() < math.exp((update_step+1)*args.sampling_annealing_rate):
-        fake_action = word_index_selector(fake_vocabulary_probs, 'argmax')
-    else:
-        fake_action = word_index_selector(fake_vocabulary_probs, 'sample')
+    # update_step = 0 if update_step < 5 else update_step
+    # if torch.rand(1).item() > min(0.95, (update_step/args.optimization_steps)**2) or True:
+    fake_action = word_index_selector(fake_vocabulary_probs, 'sample')
+    # else:
+    #     fake_action = word_index_selector(fake_vocabulary_probs, 'argmax')
     fake_input_ids = (my_attention_mask*fake_action + (1 - my_attention_mask)*input_ids).long()
     # throw fake_action to device
     fake_action = fake_action.to(args.device)
@@ -50,16 +53,23 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
         logits_discriminator = discriminatorM(fake_input_ids)
         logits_classifier = classifierM(fake_input_ids, attention_mask, token_type_ids)
 
-    rewards_discriminator = 2*sigmoid(logits_discriminator) - 1
-    rewards_classifier = my_CrossEntropyLoss(logits_classifier, classification_labels.nonzero()[:, 1].long(), neg_one=False)
+    m_ = (args.rewards_start - args.rewards_stop) / (args.optimization_steps * (2*args.rewards_squeeze - 1))
+    b_ = (args.rewards_squeeze * (args.rewards_stop - args.rewards_start) - args.rewards_start) / (2 * args.rewards_squeeze - 1)
+    rewards_decay = max(args.rewards_start, min(args.rewards_stop, m_*update_step + b_))
+    # rewards_discriminator = my_BinaryCrossEntropyLoss(sigmoid(logits_discriminator), 1-my_attention_mask, neg_one=True)
+    rewards_discriminator = (2 - rewards_decay) * 2 * sigmoid(logits_discriminator) - 1
+    rewards_classifier = rewards_decay * 2 * softmax(logits_classifier)[classification_labels.nonzero(as_tuple=True)] - 1
+    # rewards_classifier = my_CrossEntropyLoss(logits_classifier, classification_labels.nonzero()[:, 1].long(), neg_one=True)
     # False because the generator should be rewarded for fooling the classifier into selecting the wrong options
+    #  multiplied by -1 because this is a reward and not an error
+    # Same reasons as above for being True # TODO make some annealing on the rewards, probably make it a squished linear function so starts at zero and tops out both in the middle of updating
 
     # calculate errors
     # have to make sure to use fake_vocabulary_probs to get connection to generator, see eq 9 in scratch gan
-    loss = discount_rewards(args, fake_vocabulary_probs, fake_action, my_attention_mask,
+    loss = discount_rewards(args, baseline, fake_vocabulary_probs, fake_action, my_attention_mask,
                             rewards_discriminator, sentences_type, rewards_classifier)
 
-    return loss.sum(), fake_input_ids, (logits_discriminator, logits_classifier)
+    return loss, fake_input_ids, (logits_discriminator, logits_classifier)
 
         # if torch.any(rewards_classifier.detach().cpu() < best_rewards_classifier):
         #     which_better = (rewards_classifier.detach().cpu() < best_rewards_classifier).nonzero().squeeze().tolist()
@@ -93,22 +103,23 @@ def train_classifier_discriminator(args, fake_input_ids, real_input_ids, attenti
         error_real_c = torch.sum(sentences_type * error_real_c) / torch.sum(sentences_type)
 
         logits_fake_c = classifierM(fake_input_ids, attention_mask, token_type_ids)
-        error_fake_c = my_CrossEntropyLoss(logits_fake_c, classification_labels.nonzero()[:, 1].long(), neg_one=True)
+        error_fake_c = my_CrossEntropyLoss(logits_fake_c, classification_labels.nonzero()[:, 1].long(), neg_one=False)
         # True because the classifier should be rewarded for seeing through a poor generator attempt at adversarially
-        #  attacking the classifier
+        #  attacking the classifier,
+        # False because classifier should not be rewarded for saying something from the generator is correct, otherwise
+        #  they work together
         error_fake_c = torch.sum(sentences_type * error_fake_c) / torch.sum(sentences_type)
     else:
         logits_real_c, error_real_c = None, None
         logits_fake_c, error_fake_c = None, None
 
     logits_real_d = discriminatorM(real_input_ids)
-    # error_real_d = Wloss(logits_real_d, real_discriminator_labels, my_attention_mask, use_tanh=True)
-    error_real_d = my_BinaryCrossEntropyLoss(logits_real_d, my_attention_mask, neg_one=True)
+    error_real_d = my_BinaryCrossEntropyLoss(sigmoid(logits_real_d), my_attention_mask, neg_one=True) # training to denote 1 as real
     error_real_d = torch.sum(error_real_d[my_attention_mask.nonzero(as_tuple=True)]) / float(my_attention_mask.nonzero().shape[0])
 
     logits_fake_d = discriminatorM(fake_input_ids)
-    # error_fake_d = Wloss(logits_fake_d, fake_discriminator_labels, my_attention_mask, use_tanh=True)
-    error_fake_d = my_BinaryCrossEntropyLoss(logits_fake_d, my_attention_mask, neg_one=False)
+    # error_fake_d = my_BinaryCrossEntropyLoss(sigmoid(logits_fake_d), my_attention_mask, neg_one=False) # training to denote 0 as fake
+    error_fake_d = my_BinaryCrossEntropyLoss(sigmoid(logits_fake_d), my_attention_mask, neg_one=False)
     error_fake_d = torch.sum(error_fake_d[my_attention_mask.nonzero(as_tuple=True)]) / float(my_attention_mask.nonzero().shape[0])
 
     return {'logits_real_c': logits_real_c, 'logits_fake_c': logits_fake_c, 'logits_real_d': logits_real_d, 'logits_fake_d': logits_fake_d}, \
@@ -135,7 +146,7 @@ def word_index_selector(vocab_probs, method):
         raise NotImplementedError
 
 
-def discount_rewards(args, vocab_probs, action, my_attention_mask, rewards_d, sentences_type, rewards_c):
+def discount_rewards(args, baseline, vocab_probs, action, my_attention_mask, rewards_d, sentences_type, rewards_c):
     '''
 
     :param args: should have the gamma value and weighting between rewards_d/ rewards_c
@@ -152,8 +163,7 @@ def discount_rewards(args, vocab_probs, action, my_attention_mask, rewards_d, se
     assert isinstance(vocab_probs, torch.Tensor)
     probs_selected = vocab_probs.gather(dim=3, index=action.unsqueeze(-1)).squeeze()
 
-    # TODO are classifier inputs just rewarded more??
-    rewards = ((sentences_type * rewards_c).view(-1, 1, 1) + rewards_d) * my_attention_mask
+    rewards = rewards_d * my_attention_mask
     rewards = rewards.view(-1, rewards.shape[-1])
     my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])
 
@@ -161,15 +171,23 @@ def discount_rewards(args, vocab_probs, action, my_attention_mask, rewards_d, se
     for j in range(rewards_gamma.shape[-1]):
         rewards_gamma[:, j] = torch.sum(gamma_tensor[:len(gamma_tensor)-j].unsqueeze(0) * rewards[:, j:], dim=1)
 
-    # flipped_rewards = torch.flip(rewards_gamma, [2])
-    # cumsum_flipped_rewards = torch.cumsum(flipped_rewards, dim=2)
-    # cumsum_rewards = torch.flip(cumsum_flipped_rewards, [2])
+    rewards_gamma += ((sentences_type * rewards_c).unsqueeze(1) * torch.ones(*rewards_d.shape[:2]).to(rewards_d.device)).view(-1, 1)
 
-    rewards_minus_mean = rewards_gamma - (torch.sum(rewards_gamma * my_attention_mask, dim=-1) / torch.sum(my_attention_mask, dim=-1)).unsqueeze(-1)
+    baseline['num_steps'] += rewards.shape[0]
+    baseline['total_mean_rewards'] += torch.sum(torch.sum(rewards_gamma * my_attention_mask, dim=-1) / torch.sum(my_attention_mask, dim=-1))
 
-    out = -1 * rewards_minus_mean * torch.log(probs_selected.view(-1, probs_selected.shape[-1])) * my_attention_mask
+    if not baseline['num_steps'] == 0:
+        new_baseline = baseline['prev'] * args.lambda_baseline + (1 - args.lambda_baseline) * (baseline['total_mean_rewards'] / baseline['num_steps'])
+    else:
+        new_baseline = 0
 
-    return torch.sum(out, dim=-1) #/ torch.sum(my_attention_mask)
+    rewards_minus_baseline = rewards_gamma - new_baseline
+
+    loss = torch.mean(torch.sum(-1 * rewards_minus_baseline * torch.log(probs_selected.view(-1, probs_selected.shape[-1])) * my_attention_mask, dim=-1))
+
+    baseline['prev'] = new_baseline
+
+    return loss
 
 
 def Wloss(preds, labels, my_attention_mask, use_tanh=False):
