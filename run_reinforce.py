@@ -139,7 +139,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
     # optimizers
     classifierO = AdamW(classifierM.parameters(), lr=args.learning_rate_classifier, weight_decay=1)
-    generatorO = AdamW(generatorM.parameters(), lr=args.learning_rate_generator)
+    generatorO = AdamW(generatorM.parameters(), lr=args.learning_rate_generator, weight_decay=0)
     discriminatorO = AdamW(discriminatorM.parameters(), lr=args.learning_rate_classifier, weight_decay=1)
 
     train_iterator = trange(int(args.epochs), desc="Epoch")
@@ -154,9 +154,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
     if args.do_prevaluation:
         assert -1 == evaluate(args, classifierM, generatorM, attentionM, tokenizer, 0)
 
+    args.optimization_steps = args.epochs * (len(dataset) // (args.batch_size * args.accumulation_steps))
+
     logger.info('Starting to train!')
     logger.info('There are {} examples.'.format(len(dataset)))
-    logger.info('There will be {} iterations.'.format(len(dataset) // (args.batch_size * args.accumulation_steps) + 1))
+    logger.info('There will be {} optimization steps.'.format(args.optimization_steps))
 
     for epoch, _ in enumerate(train_iterator):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration, batch size {}".format(args.batch_size))
@@ -176,6 +178,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
         # gradient parameters for classifier and discriminator
         classifier_gradients = []
         discriminator_gradients = []
+
+        # baseline dict: (prev baseline, total reward, num_steps)
+        baseline_dict = {'prev': 0, 'total_mean_rewards': 0, 'num_steps': 0}
 
         for batch_iterate, batch in enumerate(epoch_iterator):
             logger.info('Epoch: {} Iterate: {}'.format(epoch, batch_iterate))
@@ -216,7 +221,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                                                                                            generatorM,
                                                                                            classifierM,
                                                                                            discriminatorM,
-                                                                                           update_step)
+                                                                                           update_step,
+                                                                                           baseline_dict)
 
             # assign fake_input_ids to fake_inputs
             fake_input_ids = fake_input_ids.to(args.device)
@@ -253,14 +259,21 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                                                real_inputs['sentences_type'], discriminatorM, classifierM)
 
             # error_real_c is classification error, error_real_d is discriminator error
-            if errors['error_real_c'] is not None:
-                errors['error_real_c'] /= (args.accumulation_steps / 0.5)  # already dividing by sum in utils_classifier
-                errors['error_real_c'] /= args.accumulation_steps  # already dividing by sum in utils_classifier
+            if errors['error_real_c'] is not None: # TODO put a annealing here with a start stop and then calculate accordingly
+                m_ = (args.classification_start - args.classification_stop) / (
+                            args.optimization_steps * (2 * args.classification_squeeze - 1))
+                b_ = (args.classification_squeeze * (args.classification_stop - args.classification_start) - args.classification_start) / (
+                            2 * args.classification_squeeze - 1)
+                classifcation_decay = max(args.classification_start, min(args.classification_stop, m_ * update_step + b_))
+
+                errors['error_real_c'] *= 1 - classifcation_decay
+                errors['error_real_c'] /= args.accumulation_steps # already dividing by sum in utils_classifier
                 errors['error_real_c'].backward()
 
                 accumulated_error_real_c += errors['error_real_c'].detach().item()
 
-                errors['error_fake_c'] /= (args.accumulation_steps / 0.5)
+                errors['error_fake_c'] *= classifcation_decay
+                errors['error_fake_c'] /= args.accumulation_steps
                 errors['error_fake_c'].backward()
 
                 num_classification_seen += sum(real_inputs['sentences_type'])
@@ -270,8 +283,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                              torch.argmax(logits['logits_real_c'][real_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                     dtype=torch.int).detach().cpu()
                 num_training_correct_generator_classifier += torch.sum(torch.eq(
-                    torch.argmin(
-                        (1 - real_inputs['classification_labels'])[real_inputs['sentences_type'].nonzero().squeeze()],
+                    torch.argmax(
+                        real_inputs['classification_labels'][real_inputs['sentences_type'].nonzero().squeeze()],
                         dim=-1),
                     torch.argmin(logits_gen_c[real_inputs['sentences_type'].nonzero().squeeze()], dim=-1)),
                     dtype=torch.int).detach().cpu()
@@ -330,7 +343,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
             if (batch_iterate + 1) % args.accumulation_steps == 0:
                 messages = {}
                 messages[
-                    'message_generator_batch_error'] = 'The batch Generator error: {:.3f}'.format(
+                    'message_generator_batch_error'] = 'The batch Generator "loss": {:.3f}'.format(
                     accumulated_error_generator)
 
                 messages['message_classifier_batch_error'] = 'The batch Classifier error: {:.3f}'.format(
@@ -338,8 +351,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
                 messages[
                     'message_discriminator_batch_error'] = 'The batch Discriminator errors: real {:.3f} + fake {:.3f} = {:.3f}'.format(
-                    accumulated_error_fake_d,
                     accumulated_error_real_d,
+                    accumulated_error_fake_d,
                     accumulated_error_fake_d +
                     accumulated_error_real_d)
 
@@ -373,7 +386,7 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 if not args.quiet:
                     logger.info('Running totals for current epoch {}, after update {}'.format(epoch,
                                                                                               batch_iterate // args.accumulation_steps))
-                    print('Running totals for current epoch {}, after update {}'.format(epoch,
+                    print('\nRunning totals for current epoch {}, after update {}'.format(epoch,
                                                                                         batch_iterate // args.accumulation_steps))
                     for m in messages.values():
                         logger.info(m)
@@ -442,6 +455,8 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
         epoch_iterator.close()
     train_iterator.close()
 
+    return attentionM, generatorM, classifierM, update_step
+
 
 def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, test=False):
     results = {}
@@ -470,6 +485,9 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
 
     logger.info('Starting Evaluation!')
     logger.info('Number of examples: {}'.format(len(eval_dataset)))
+    logger.info('Relevant Checkpoint is {}'.format(checkpoint))
+    print('Starting Evaluation!\nNumber of examples: {}.\nRelevant Checkpoint is {}.'.format(len(eval_dataset),
+                                                                                             checkpoint))
 
     real_loss = 0.
     fake_loss = 0.
@@ -498,10 +516,11 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
 
             masked_input_ids, my_attention_mask, fake_discriminator_labels = attentionM(inputs['input_ids'], inputs['my_attention_mask'])
             # fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
-            fake_vocabulary_probs = generatorM(masked_input_ids, inputs['attention_mask'], inputs['token_type_ids'])
+            fake_vocabulary_probs = generatorM(masked_input_ids, inputs['attention_mask'],
+                                               inputs['token_type_ids'], inputs['classification_labels'])
 
             # choose words at random or argmax or based on probability
-            fake_action = word_index_selector(fake_vocabulary_probs, 'argmax')
+            fake_action = word_index_selector(fake_vocabulary_probs, 'sample')
             fake_input_ids = (my_attention_mask * fake_action +
                               (1 - my_attention_mask) * inputs['input_ids']).long()
 
@@ -538,7 +557,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
             num_steps += 1
 
     real_eval_loss = real_loss / num_steps
-    fake_eval_loss= fake_loss / num_steps
+    fake_eval_loss = fake_loss / num_steps
     cum_real_predictions = np.argmax(all_real_predictions, axis=1)
     cum_fake_predictions = np.argmin(all_fake_predictions, axis=1)
     all_labels = np.argmax(all_labels, axis=1)
@@ -554,7 +573,6 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
     results['number of examples'] = len(eval_dataset)
     results['real loss'] = round(real_eval_loss, 4)
     results['fake loss'] = round(fake_eval_loss, 4)
-
 
     logger.info('After evaluating:')
     for key, val in results.items():
@@ -574,8 +592,8 @@ def main():
             self.transformer_name = 'roberta'
             self.tokenizer_name = 'roberta-base'
             self.generator_model_type = 'roberta-reinforce'
-            self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/rock_roberta-base/'
-            # self.generator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-moon_earth/roberta-generator-25/'
+            self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/force_roberta-base/'
+            # self.generator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-moon_earth/roberta-generator-40/'
             self.attention_model_type = 'essential-reinforce'
 
             self.classifier_model_type = 'roberta-reinforce'
@@ -586,7 +604,7 @@ def main():
             self.classifier_num_layers = 2
 
             self.discriminator_model_type = 'lstm-reinforce'
-            # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-moon_earth/roberta-discriminator-25/'
+            # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-moon_earth/roberta-discriminator-32/'
             self.discriminator_model_name = None
             self.discriminator_embedding_type = None
             self.discriminator_embedding_dim = 50
@@ -594,10 +612,11 @@ def main():
             self.discriminator_num_layers = 2
             self.discriminator_dropout = 0.10
 
-            self.epochs = 6
+            self.epochs = 7
             self.cutoff = None
             self.do_evaluate_test = False
             self.do_evaluate_dev = True
+            self.do_train = True
             self.use_gpu = True
             self.overwrite_output_dir = True
             self.overwrite_cache_dir = False
@@ -608,16 +627,15 @@ def main():
             self.evaluate_all_models = False
             self.quiet = False
 
-            self.domain_words = ['all']
+            self.domain_words = ['force', 'mass', 'energy']
             self.evaluate_during_training = True
             self.learning_rate_classifier = 9e-5
             self.learning_rate_generator = 9e-6
-            self.do_train = True
             self.batch_size = 6
-            self.save_steps = 8
+            self.save_steps = 10
             self.essential_mu_p = 0.30
             self.use_corpus = False
-            self.accumulation_steps = 15
+            self.accumulation_steps = 20
             self.train_classifier = True
             self.train_discriminator = True
             self.train_generator = True
@@ -625,7 +643,13 @@ def main():
             self.do_ablation_discriminator = True
             self.do_ablation_classifier = True
             self.do_prevaluation = True
-            self.sampling_annealing_rate = -0.05
+            self.lambda_baseline = 0.15
+            self.rewards_stop = 0.5
+            self.rewards_start = 0.
+            self.rewards_squeeze = 0.2
+            self.classification_stop = 0.35
+            self.classification_start = 0.
+            self.classification_squeeze = 0.2
 
     args = Args()
 
@@ -687,6 +711,7 @@ def main():
     args.device = device
     logger.info('Using device {}'.format(args.device))
 
+    models_checkpoints = []
     if args.do_train:
         # initialize and return models
         generatorM, attentionM, classifierM, discriminatorM = inititalize_models(args, tokenizer)
@@ -695,10 +720,11 @@ def main():
         # attention_masks [n, 4, max_length] and labels [n, 4]
         dataset = load_and_cache_features(args, tokenizer, 'train')
 
-        train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM)
+        attentionM, generatorM, classifierM, update_step = train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM)
+        models_checkpoints = [((attentionM, generatorM, classifierM), update_step)]
 
     if args.do_evaluate_dev:
-        models_checkpoints = load_models(args, tokenizer)
+        models_checkpoints = load_models(args, tokenizer) if not len(models_checkpoints) else models_checkpoints
         for (attentionM, generatorM, classifierM), cp in models_checkpoints:
 
             # move to proper device based on if gpu is available
@@ -708,6 +734,19 @@ def main():
             classifierM.to(args.device)
 
             assert -1 == evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
+
+    if args.do_evaluate_test:
+        models_checkpoints = load_models(args, tokenizer) if not len(models_checkpoints) else models_checkpoints
+
+        for (attentionM, generatorM, classifierM), cp in models_checkpoints:
+
+            # move to proper device based on if gpu is available
+            logger.info('Loading evaluation models from checkpoint {} to {}'.format(cp, args.device))
+            generatorM.to(args.device)
+            attentionM.to(args.device)
+            classifierM.to(args.device)
+
+            assert -1 == evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp, test=True)
 
 
 if __name__ == '__main__':
