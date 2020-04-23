@@ -280,8 +280,8 @@ class GeneralModelForMultipleChoiceReinforce(nn.Module):
             raise NotImplementedError
 
         outputs = self.model(input_ids=input_ids,
-                              token_type_ids=token_type_ids,
-                              attention_mask=attention_mask)
+                             token_type_ids=token_type_ids,
+                             attention_mask=attention_mask)
 
         logits = outputs[0]
 
@@ -301,6 +301,8 @@ class ClassifierNetReinforce(nn.Module):
 
     def __init__(self, config):
         super(ClassifierNetReinforce, self).__init__()
+
+        self.config = config
 
         self.embedding = nn.Embedding(config.vocab_size, config.embedding_dimension, padding_idx=0)
 
