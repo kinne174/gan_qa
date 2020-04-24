@@ -91,12 +91,14 @@ class HuggingfaceTranslators:
                 elif 'Ġ' not in token and token_ind is not 0:  # don't know what this character is, had to copy paste from debugger
                     new_predictions.append(predictions[prediction_ind - 1])
                     shared_tokens.append(prediction_ind + 1)
+                elif token == 'Ġ':
+                    continue
                 else:
                     new_predictions.append(predictions[prediction_ind])
                     shared_tokens.append(prediction_ind + 1)
                     prediction_ind += 1
 
-            # This stuff should not activate but just in case...**
+        # This stuff should not activate but just in case...**
             except IndexError:
                 break
 
@@ -152,8 +154,8 @@ def feature_loader(args, tokenizer, examples):
                     return_token_type_ids=True,
                     return_special_tokens_mask=True,
                 )
-            except AssertionError as err_msg:
-                logger.info('Assertion error at example id {}: {}'.format(ex_ind, err_msg))
+            except (AssertionError, IndexError) as err_msg:
+                logger.info('Assertion or Index error at example id {}: {}'.format(ex_ind, err_msg))
                 break_flag = True
                 break
 
