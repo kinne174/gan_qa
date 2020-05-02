@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from transformers import (BertPreTrainedModel, RobertaConfig, AlbertPreTrainedModel, AlbertConfig, AlbertModel, RobertaModel, ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP)
+from transformers import (BertPreTrainedModel, RobertaConfig, AlbertPreTrainedModel, AlbertConfig, AlbertModel, RobertaModel, ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP,
+                          BertConfig, BertForMultipleChoice)
 from transformers import PretrainedConfig
 import logging
 import os
@@ -274,7 +275,7 @@ class GeneralModelForMultipleChoiceReinforce(nn.Module):
 
         if hasattr(self.model, 'roberta'):
             token_type_ids = None
-        elif hasattr(self.model, 'albert'):
+        elif hasattr(self.model, 'albert') or hasattr(self.model, 'bert'):
             pass
         else:
             raise NotImplementedError
@@ -291,6 +292,15 @@ class GeneralModelForMultipleChoiceReinforce(nn.Module):
 class MyRobertForMultipleChoiceReinforce(GeneralModelForMultipleChoiceReinforce):
     def __init__(self, pretrained_model_name_or_path, config):
         super(MyRobertForMultipleChoiceReinforce, self).__init__(model=RobertaForMultipleChoice.from_pretrained(pretrained_model_name_or_path, config=config))
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
+
+
+class MyBertForMultipleChoiceReinforce(GeneralModelForMultipleChoiceReinforce):
+    def __init__(self, pretreained_model_name_or_path, config):
+        super(MyBertForMultipleChoiceReinforce, self).__init__(model=BertForMultipleChoice.from_pretrained(pretreained_model_name_or_path, config=config))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
@@ -376,5 +386,6 @@ classifier_models_and_config_classes = {
     'roberta': (RobertaConfig, MyRobertForMultipleChoice),
     'albert': (AlbertConfig, MyAlbertForMultipleChoice),
     'roberta-reinforce': (RobertaConfig, MyRobertForMultipleChoiceReinforce),
-    'linear-reinforce': (ClassifierConfig, ClassifierNetReinforce)
+    'linear-reinforce': (ClassifierConfig, ClassifierNetReinforce),
+    'bert-reinforce': (BertConfig, MyBertForMultipleChoiceReinforce)
 }
