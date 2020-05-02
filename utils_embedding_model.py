@@ -28,10 +28,49 @@ class ArcFeature(object):
 
 class HuggingfaceTranslators:
     def __init__(self, transformer_name):
-        valid_transformers = ['albert', 'roberta']
+        valid_transformers = ['albert', 'roberta', 'bert']
         assert transformer_name in valid_transformers, 'transformer must be one of {}'.format(' '.join(valid_transformers))
 
         self.transformer_name = transformer_name
+
+    def BertTranslator(self, tokenizer, context_tokens, predictions):
+        new_predictions = []
+        shared_tokens = []
+        prediction_ind = 0
+        # if token is a special token then assign it zero (other than <unk>)
+        for token_ind, token in enumerate(context_tokens):
+            try:
+                if token in tokenizer.all_special_tokens:
+                    if token == tokenizer.unk_token:
+                        new_predictions.append(predictions[prediction_ind])
+                        prediction_ind += 1
+                    else:
+                        new_predictions.append(0.)
+                    shared_tokens.append(0)
+                elif '##' in token:  # don't know what this character is, had to copy paste from debugger
+                    new_predictions.append(predictions[prediction_ind - 1])
+                    shared_tokens.append(prediction_ind + 1)
+                elif token == '##':
+                    continue
+                else:
+                    new_predictions.append(predictions[prediction_ind])
+                    shared_tokens.append(prediction_ind + 1)
+                    prediction_ind += 1
+
+        # This stuff should not activate but just in case...**
+            except IndexError:
+                break
+
+        if len(new_predictions) > len(context_tokens):
+            new_predictions = new_predictions[:len(context_tokens)]
+            shared_tokens = shared_tokens[:len(context_tokens)]
+        if len(new_predictions) < len(context_tokens):
+            new_predictions.extend([np.mean(predictions)] * (len(context_tokens) - len(new_predictions)))
+            shared_tokens.extend([shared_tokens[-1]] * (len(context_tokens) - len(shared_tokens)))
+        # **
+
+        return new_predictions, shared_tokens
+
 
     def AlbertTranslator(self, tokenizer, context_tokens, predictions):
 
@@ -73,6 +112,7 @@ class HuggingfaceTranslators:
         # **
 
         return new_predictions, shared_tokens
+
 
     def RobertaTranslator(self, tokenizer, context_tokens, predictions):
         new_predictions = []
@@ -117,6 +157,8 @@ class HuggingfaceTranslators:
             return self.AlbertTranslator(tokenizer, context_tokens, predictions)
         elif self.transformer_name == 'roberta':
             return self.RobertaTranslator(tokenizer, context_tokens, predictions)
+        elif self.transformer_name == 'bert':
+            return self.BertTranslator(tokenizer, context_tokens, predictions)
         else:
             raise NotImplementedError
 
@@ -144,6 +186,8 @@ def feature_loader(args, tokenizer, examples):
             question_ending = ''.join([c if c.isalnum() else ' ' for c in question_ending])
             context = ''.join([c if c.isalnum() else ' ' for c in context])
 
+            # TODO try doing this but with context first and truncate the first
+
             try:
                 inputs = tokenizer.encode_plus(
                     question_ending,
@@ -169,6 +213,9 @@ def feature_loader(args, tokenizer, examples):
             elif args.transformer_name == 'roberta':
                 input_ids, token_type_mask = inputs['input_ids'], inputs['special_tokens_mask']
                 context_beginning_ind = token_type_mask[1:].index(1) + 1
+            elif args.transformer_name == 'bert':
+                input_ids, token_type_mask = inputs['input_ids'], inputs['token_type_ids']
+                context_beginning_ind = token_type_mask.index(1)
             else:
                 raise NotImplementedError
 
@@ -210,7 +257,7 @@ def feature_loader(args, tokenizer, examples):
             # for roberta disregard the G` alone and mark shared when there is no G` preceding the word
             new_predictions, shared_tokens = Translator.translate(tokenizer, context_tokens, predictions)
 
-            if args.transformer_name == 'albert':
+            if args.transformer_name == 'albert' or args.transformer_name == 'bert':
                 assert len(new_predictions) == len(shared_tokens) == sum(token_type_mask), 'There should be the same number of predictions ({}) as shared_tokens ({}) as there are context tokens ({})'.format(len(new_predictions), len(shared_tokens), sum(token_type_mask))
             elif args.transformer_name == 'roberta':
                 assert len(new_predictions) == len(shared_tokens), 'There should be the same number of predictions ({}) as shared_tokens ({})'.format(len(new_predictions), len(shared_tokens))
