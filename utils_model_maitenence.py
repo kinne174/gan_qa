@@ -27,9 +27,9 @@ def inititalize_models(args, tokenizer):
     if args.generator_model_type in ['seq']:
         generator_config_dict.update({'input_dim': tokenizer.vocab_size})
 
-    # roberta, albert, linear-reinforce, roberta-reinforce
+    # roberta, albert, linear-reinforce, roberta-reinforce, bert-reinforce
     classifier_config_dict = {}
-    if args.classifier_model_type in ['roberta', 'albert', 'roberta-reinforce']:
+    if args.classifier_model_type in ['roberta', 'albert', 'roberta-reinforce', 'bert-reinforce']:
         classifier_config_dict.update({'pretrained_model_name_or_path': args.classifier_model_name,
                                         'num_labels': 4,
                                         'finetuning_task': 'ARC',
@@ -58,14 +58,14 @@ def inititalize_models(args, tokenizer):
     if args.attention_model_type in ['essential']:
         attention_model_dict.update({'device': args.device})
 
-    # roberta, albert, seq, roberta-reinforce
+    # roberta, albert, seq, roberta-reinforce, bert-reinforce
     generator_model_dict = {'config': generator_config}
     if args.generator_model_type in ['roberta', 'albert']:
         generator_model_dict.update({'device': args.device})
-    if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce']:
+    if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce', 'bert-reinforce']:
         generator_model_dict.update({'pretrained_model_name_or_path': args.generator_model_name})
 
-    # roberta, albert, linear-reinforce, roberta-reinforce
+    # roberta, albert, linear-reinforce, roberta-reinforce, 'bert-reinforce'
     classifier_model_dict = {'config': classifier_config,
                              'pretrained_model_name_or_path': args.classifier_model_name}
     if args.classifier_model_type in ['roberta', 'albert']:
@@ -118,7 +118,7 @@ def save_models(args, checkpoint, generatorM, classifierM, discriminatorM):
     discriminatorM.save_pretrained(output_dir_discriminator)
     logger.info('Saving discriminator model checkpoint to {}'.format(output_dir_discriminator))
 
-    print('Models saved!')
+    logger.info('Models saved!')
 
     return -1
 
@@ -151,7 +151,7 @@ def load_models(args, tokenizer):
         generator_model_dict = {'config': generator_folder[0]}
         if args.generator_model_type in ['roberta', 'albert']:
             generator_model_dict.update({'device': args.device})
-        if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce']:
+        if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce', 'bert-reinforce']:
             generator_model_dict.update({'pretrained_model_name_or_path': generator_folder[0]})
 
         # roberta, albert, linear-reinforce, roberta-reinforce
@@ -169,6 +169,7 @@ def load_models(args, tokenizer):
         attention_config_dict = {'mu_p': args.essential_mu_p,
                                  'mask_id': tokenizer.mask_token_id}
         attention_config = attention_config_class.from_pretrained(**attention_config_dict)
+
         # essential, essential-reinforce
         attention_model_dict = {'config': attention_config}
         if args.attention_model_type in ['essential']:
