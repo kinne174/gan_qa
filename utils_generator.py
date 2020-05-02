@@ -353,16 +353,42 @@ class ElementwiseMultiplication(nn.Module):
         return out
 
 
+class Weight_Clipper(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, module):
+        if hasattr(module, 'weight') and module.weight is not None:
+            w = module.weight.data
+            w = w.clamp(-1., 1.)
+            module.weight.data = w
+
+        if hasattr(module, 'bias') and module.bias is not None:
+                b = module.bias.data
+                b = b.clamp(1e-12, 1.)
+                module.bias.data = b
+
+
 class GeneratorReinforcement(nn.Module):
     def __init__(self, model):
         super(GeneratorReinforcement, self).__init__()
 
-        self.softmax = nn.Softmax(dim=-1)
+        self.log_softmax = nn.LogSoftmax(dim=-1)
         self.model = model
 
         vocab_size = self.model.config.vocab_size
-        self.correct_elementwise = ElementwiseMultiplication(vocab_size, bias=True)
-        self.incorrect_elementwise = ElementwiseMultiplication(vocab_size, bias=True)
+        self.correct_elementwise = ElementwiseMultiplication(vocab_size, bias=False)
+        self.incorrect_elementwise = ElementwiseMultiplication(vocab_size, bias=False)
+
+        self.temperature = 1.
+
+        # self.reset_weights()
+
+    def reset_weights(self):
+        if hasattr(self, 'correct_elementwise'):
+            self.correct_elementwise.reset_parameters()
+        if hasattr(self, 'incorrect_elementwise'):
+            self.incorrect_elementwise.reset_parameters()
 
     def save_pretrained(self, save_directory):
         self.model.save_pretrained(save_directory)
@@ -372,12 +398,23 @@ class GeneratorReinforcement(nn.Module):
             token_type_ids = None
         elif hasattr(self.model, 'albert'):
             pass
+        elif hasattr(self.model, 'bert'):
+            idx = 1
+            input_ids_to_select = torch.tensor([[1], [2]], dtype=torch.long).to(classification_labels.device)
+            input_ids_to_insert = torch.index_select(input=input_ids_to_select, dim=0, index=classification_labels.long().view(-1)).view(*classification_labels.shape, input_ids_to_select.shape[1])
+            input_ids = torch.cat((input_ids[..., :idx], input_ids_to_insert, input_ids[..., idx:]), dim=-1)
+
+            token_type_ids = torch.cat((token_type_ids[..., :idx], torch.zeros_like(input_ids_to_insert), token_type_ids[..., idx:]), dim=-1)
+            attention_mask = torch.cat((attention_mask[..., :idx], torch.ones_like(input_ids_to_insert), attention_mask[..., idx:]), dim=-1)
+
         else:
             raise NotImplementedError
 
         # change from dimension [batch size, 4, max length] to [4*batch size, max length]
         temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
         temp_attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
+
+        # TODO can also experiment with putting a 1/2 there rather than a one hot
 
         assert temp_input_ids.dtype == torch.long
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
@@ -386,12 +423,24 @@ class GeneratorReinforcement(nn.Module):
                                    token_type_ids=token_type_ids.view(-1, token_type_ids.shape[-1]) if token_type_ids is not None else None)
 
         prediction_scores = model_outputs[0]
+
+        if hasattr(self.model, 'bert'):
+            prediction_scores = torch.cat((prediction_scores[:, :idx, :], prediction_scores[:, idx+(prediction_scores.shape[1] - 256):, :]), dim=1)
+
         prediction_scores = prediction_scores.view(-1, 4, *prediction_scores.shape[1:])
 
-        prediction_scores = classification_labels.view(*classification_labels.shape, 1, 1) * self.correct_elementwise(prediction_scores) + \
-                        (1 - classification_labels).view(*classification_labels.shape, 1, 1) * self.incorrect_elementwise(prediction_scores)
+        argmax1 = torch.argmax(prediction_scores, dim=-1)
+        vals1 = prediction_scores.gather(dim=3, index=argmax1.unsqueeze(-1))
 
-        prediction_scores = self.softmax(prediction_scores)
+        # prediction_scores = classification_labels.view(*classification_labels.shape, 1, 1) * self.correct_elementwise(prediction_scores) + \
+        #                 (1 - classification_labels).view(*classification_labels.shape, 1, 1) * self.incorrect_elementwise(prediction_scores)
+
+        argmax2 = torch.argmax(prediction_scores, dim=-1)
+        vals2 = prediction_scores.gather(dim=3, index=argmax2.unsqueeze(-1))
+        new_vals1 = prediction_scores.gather(dim=3, index=argmax1.unsqueeze(-1))
+
+        temperature = 1. if not self.training else self.temperature
+        prediction_scores = self.log_softmax(prediction_scores / temperature)
 
         return prediction_scores
 
@@ -404,11 +453,20 @@ class MyRobertaForMaskedLMReinforcement(GeneratorReinforcement):
     def from_pretrained(cls, pretrained_model_name_or_path, config):
         return cls(pretrained_model_name_or_path, config)
 
+class MyBertForMaskedLMReinforcement(GeneratorReinforcement):
+    def __init__(self, pretrained_model_name_or_path, config):
+        super(MyBertForMaskedLMReinforcement, self).__init__(model=BertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config))
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        return cls(pretrained_model_name_or_path, config)
+
 
 generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
     'roberta': (RobertaConfig, MyRobertaForMaskedLM),
     'albert': (AlbertConfig, MyAlbertForMaskedLM),
-    'roberta-reinforce': (RobertaConfig, MyRobertaForMaskedLMReinforcement)
+    'roberta-reinforce': (RobertaConfig, MyRobertaForMaskedLMReinforcement),
+    'bert-reinforce': (BertConfig, MyBertForMaskedLMReinforcement)
 }
 
