@@ -35,6 +35,7 @@ sigmoid = torch.nn.Sigmoid()
 TOKENIZER_CLASSES = {
     'roberta': RobertaTokenizer,
     'albert': AlbertTokenizer,
+    'bert': BertTokenizer,
 }
 
 
@@ -717,11 +718,11 @@ def main():
                 self.save_steps = 5
                 self.essential_terms_hidden_dim = 512
                 self.essential_mu_p = 0.25
-                self.use_corpus = False
+                self.use_corpus = True
                 self.evaluate_all_models = False
                 self.do_ablation_classifier = True
                 self.do_ablation_discriminator = False
-                self.domain_words = ['moon', 'earth']
+                self.domain_words = ['force', 'mass', 'energy']
                 self.minibatch_size = 25
                 self.classifier_hidden_dim = 100
                 self.classifier_embedding_dim = 10
@@ -816,7 +817,6 @@ def main():
         dataset = load_and_cache_features(args, tokenizer, 'train')
 
         train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM)
-
 
     if args.do_evaluate_dev:
         models_checkpoints = load_models(args, tokenizer)
