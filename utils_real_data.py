@@ -90,7 +90,7 @@ def example_loader(args, subset):
                     if question_in_domain:
                         break
 
-            if not question_in_domain:
+            if not question_in_domain and len(args.domain_words):
                 continue
 
             # update list of examples
