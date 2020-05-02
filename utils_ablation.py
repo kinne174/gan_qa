@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import logging
 import os
+from collections import Counter
+import nltk
+from nltk import ngrams
 
 # logging
 logger = logging.getLogger(__name__)
@@ -27,6 +30,14 @@ def translate_tokens(args, tokens):
             else:
                 current_tokens.append(token[1:])
 
+    elif args.transformer_name == 'bert':
+        current_tokens = []
+        for token in tokens:
+            if '##' in token:
+                current_tokens.append(token[2:])
+            else:
+                current_tokens.append(token)
+
     else:
         return NotImplementedError
 
@@ -39,7 +50,7 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
     # for each answer print the windowed true and fake context and attention scores
     # can try to translate but not necessary on first pass
 
-    if not args.transformer_name in ['albert', 'roberta']:
+    if not args.transformer_name in ['albert', 'roberta', 'bert']:
         raise NotImplementedError
 
     assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])
@@ -124,16 +135,16 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
             all_real_words.append(new_real_words)
 
         current_real_label = inputs['classification_labels'][i, :]
-        current_fake_label = 1- current_real_label
+        current_fake_label = 1 - current_real_label
         correct_real_label = ['  ' if lab == 0 else '*r' for lab in current_real_label]
         correct_fake_label = ['  ' if lab == 1 else '*f' for lab in current_fake_label]
 
         current_real_prediction = torch.argmax(real_predictions[i, :])
-        current_fake_prediction = torch.argmin(fake_predictions[i, :])
+        current_fake_prediction = torch.argmax(fake_predictions[i, :])
 
         real_predicted_label = ['  '] * 4
         real_predicted_label[current_real_prediction.item()] = '#r'
-        fake_predicted_label = ['  ']*4
+        fake_predicted_label = ['  '] * 4
         fake_predicted_label[current_fake_prediction.item()] = '#f'
 
         real_softmaxed_scores = [round(ss, 3) for ss in sigmoid(real_predictions[i, :]).squeeze().tolist()]
@@ -165,18 +176,13 @@ def ablation(args, ablation_filename, tokenizer, fake_inputs, inputs, real_predi
 
 
 def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inputs, fake_predictions, real_predictions, generator_predictions):
-    if not args.transformer_name in ['albert', 'roberta']:
+    if not args.transformer_name in ['albert', 'roberta', 'bert']:
         raise NotImplementedError
 
     assert fake_inputs['input_ids'].shape[1] == inputs['input_ids'].shape[1] == 4, 'One of fake_inputs 2nd dimension ({}) or inputs 2nd dimension ({}) is not 4'.format(fake_inputs['input_ids'].shape[1], inputs['input_ids'].shape[1])
 
-    if os.path.exists(ablation_filename):
-        write_append_trigger = 'a'
-    else:
-        write_append_trigger = 'w'
-
-        with open(ablation_filename, write_append_trigger) as af:
-            af.write('Ablation Study start:\n\n')
+    with open(ablation_filename, 'w') as af:
+        af.write('Ablation Study start:\n\n')
 
     assert inputs['input_ids'].shape[0] == fake_inputs['input_ids'].shape[0], 'inputs batch size ({}) is not the same as fake_inputs batch size ({})'.format(inputs['input_ids'].shape[0], fake_inputs['input_ids'].shape[0])
     batch_size = inputs['input_ids'].shape[0]
@@ -224,7 +230,7 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
                     new_fake_words.append('({}, {:.3f}, {:.3f})'.format(''.join(translate_tokens(args, fake_words[k])), fake_predictions[i, j, k].item(), generator_predictions[i, j, k].item()))
                     new_real_words.append('({}, {:.3f})'.format(''.join(translate_tokens(args, real_words[k])), real_predictions[i, j, k].item()))
 
-            with open(ablation_filename, write_append_trigger) as af:
+            with open(ablation_filename, 'a') as af:
 
                 # af.write('Real score: {}\n'.format(' '.join([str(round(rp.item(), 3)) for rp in real_predictions[i, j, :pad_index]])))
                 # af.write('Fake score: {}\n'.format(' '.join([str(round(fp.item(), 3)) for fp in fake_predictions[i, j, :pad_index]])))
@@ -237,4 +243,67 @@ def ablation_discriminator(args, ablation_filename, tokenizer, fake_inputs, inpu
                     af.write('{}, {}\n'.format(rw, fw))
 
                 af.write('\n')
+
+
+def discriminator_eval(all_saved_data, oracleM, inputs):
+    num_of_grams = [2, 3, 4]
+
+    if not all_saved_data:
+
+        for n in num_of_grams:
+            all_saved_data['fake {}-gram counter'.format(n)] = Counter()
+            all_saved_data['real {}-gram counter'.format(n)] = Counter()
+
+        all_saved_data['all_perplexities'] = None
+
+        all_saved_data['all_fake_input_ids'] = None
+        all_saved_data['all_real_input_ids'] = None
+
+    assert 'masked_input_ids' in inputs
+    assert 'attention_mask' in inputs
+    assert 'token_type_ids' in inputs
+    assert 'classification_labels' in inputs
+    assert 'my_attention_mask' in inputs
+    assert 'fake_input_ids' in inputs
+    assert 'real_input_ids' in inputs
+    assert 'classification_labels' in inputs
+
+    with torch.no_grad():
+        oracle_vocabulary_logprobs = oracleM(inputs['masked_input_ids'], inputs['attention_mask'],
+                                             inputs['token_type_ids'], inputs['classification_labels'])
+        oracle_vocabulary_logprobs = oracle_vocabulary_logprobs.squeeze()
+
+        oracle_logprobs = oracle_vocabulary_logprobs.gather(dim=3, index=inputs['fake_input_ids'].unsqueeze(-1)).squeeze()
+        my_attention_mask = inputs['my_attention_mask'].view(-1, inputs['my_attention_mask'].shape[-1])
+        oracle_logprobs = oracle_logprobs.view(-1, oracle_logprobs.shape[-1])
+
+        current_perplexities = (torch.sum(oracle_logprobs * my_attention_mask, dim=-1) * -1) / torch.sum(
+            my_attention_mask, dim=-1)
+
+        if all_saved_data['all_perplexities'] is None:
+            all_saved_data['all_perplexities'] = current_perplexities
+        else:
+            all_saved_data['all_perplexities'] = torch.cat((all_saved_data['all_perplexities'], current_perplexities), dim=0)
+
+        inputs['fake_input_ids'] = inputs['fake_input_ids'].view(-1, inputs['fake_input_ids'].shape[-1])
+        inputs['real_input_ids'] = inputs['real_input_ids'].view(-1, inputs['real_input_ids'].shape[-1])
+
+        assert inputs['fake_input_ids'].shape[0] == inputs['real_input_ids'].shape[0]
+        for i in range(inputs['fake_input_ids'].shape[0]):
+            for n in num_of_grams:
+                all_saved_data['fake {}-gram counter'.format(n)].update(list(ngrams(inputs['fake_input_ids'][i, :].detach().cpu().tolist(), n)))
+                all_saved_data['real {}-gram counter'.format(n)].update(list(ngrams(inputs['real_input_ids'][i, :].detach().cpu().tolist(), n)))
+
+        if all_saved_data['all_fake_input_ids'] is None:
+            all_saved_data['all_fake_input_ids'] = inputs['fake_input_ids'].detach().cpu()
+        else:
+            all_saved_data['all_fake_input_ids'] = torch.cat((all_saved_data['all_fake_input_ids'],
+                                                              inputs['fake_input_ids'].detach().cpu()), dim=0)
+
+    return all_saved_data
+
+
+
+
+
 
