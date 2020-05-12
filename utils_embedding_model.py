@@ -1,4 +1,3 @@
-from utils_real_data import ArcExample
 import torch
 import tqdm
 import logging
@@ -153,6 +152,10 @@ class HuggingfaceTranslators:
         return new_predictions, shared_tokens
 
     def translate(self, tokenizer, context_tokens, predictions):
+        if type(predictions) is not list:
+            predictions = [predictions]
+        if type(context_tokens) is not list:
+            context_tokens = [context_tokens]
         if self.transformer_name == 'albert':
             return self.AlbertTranslator(tokenizer, context_tokens, predictions)
         elif self.transformer_name == 'roberta':
@@ -178,7 +181,6 @@ def feature_loader(args, tokenizer, examples):
     for ex_ind, ex in tqdm.tqdm(enumerate(examples), desc='Examples to Features, num Examples: {}'.format(len(examples))):
         if ex_ind % 1000 == 0:
             logger.info('Converting example number {} of {} to features.'.format(ex_ind, len(examples)))
-        assert isinstance(ex, ArcExample)
 
         choices_features = []
         for ending, context in zip(ex.endings, ex.contexts):
