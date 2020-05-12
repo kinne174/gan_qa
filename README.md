@@ -16,5 +16,5 @@ the surrounding sentence context.
 The models used are Google's Transformers<sup>1</sup> from the huggingface<sup>2</sup> 
 repository for the Generator and Classifier and a standard LSTM RNN for the Discriminator.
 
-A visual of the network is provided here:
+A visual of the Generator network is provided here:
 ![network visual](https://github.com/kinne174/gan_qa/blob/master/pictures/my_gan_v2.png)
