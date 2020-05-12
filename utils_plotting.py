@@ -273,12 +273,11 @@ def plot_training_errors(args):
 def main():
     class Args(object):
         def __init__(self):
-            # self.logging_filenames_to_plot = ['logging_g-bert-reinforce_c-bert-reinforce-18',
-            #                                   'logging_g-bert-reinforce_c-bert-reinforce-16',
-            #                                   'logging_g-bert-reinforce_c-bert-reinforce-21',
-            #                                   'logging_g-bert-reinforce_c-bert-reinforce-20',
-            #                                   'logging_g-bert-reinforce_c-bert-reinforce-17']
-            self.logging_filenames_to_plot = ['logging_g-bert-reinforce_c-bert-reinforce-23']
+            self.logging_filenames_to_plot = ['logging_g-bert-reinforce_c-bert-reinforce-145',
+                                              'logging_g-bert-reinforce_c-bert-reinforce-144',
+                                              'logging_g-bert-reinforce_c-bert-reinforce-134',
+                                              ]
+            # self.logging_filenames_to_plot = ['logging_g-bert-reinforce_c-bert-reinforce-132']
             self.output_dir = 'output/'
             self.logging_dir = '/home/kinne174/private/PythonProjects/gan_qa/logging/all/'
 
@@ -297,7 +296,9 @@ def main():
     if not os.path.exists(args.output_plot_dir):
         os.makedirs(args.output_plot_dir)
 
-    args.output_plot_dir = os.path.join(args.output_plot_dir, 'bert23/')
+    plot_dir_ending = 'bert{}'.format('-'.join([lf[(len(lf) - lf[::-1].index('-')):] for lf in args.logging_filenames_to_plot]))
+
+    args.output_plot_dir = os.path.join(args.output_plot_dir, plot_dir_ending)
     if not os.path.exists(args.output_plot_dir):
         os.makedirs(args.output_plot_dir)
     # else:
