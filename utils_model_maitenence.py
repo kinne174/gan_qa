@@ -26,6 +26,19 @@ def inititalize_models(args, tokenizer):
     generator_config_dict = {'pretrained_model_name_or_path': args.generator_model_name}
     if args.generator_model_type in ['seq']:
         generator_config_dict.update({'input_dim': tokenizer.vocab_size})
+    if args.generator_model_type in ['roberta-reinforce', 'bert-reinforce']:
+        generator_config_dict.update({'output_hidden_states': True,
+                                      'task_specific_params': {'classification_layer_size': args.classification_layer_size_in_generator,
+                                                               'temperature': 1.,
+                                                               'is_oracleM': False}})
+    if args.generator_model_type in ['seq-reinforce']:
+        generator_config_dict.update({'vocab_size': tokenizer.vocab_size,
+                                      'mask_id': tokenizer.mask_token_id,
+                                      'embedding_dim': args.generator_embedding_size,
+                                      'encoder_decoder_hidden_dim': args.generator_hidden_size,
+                                      'num_layers': args.generator_num_layers,
+                                      'classification_layer_size': args.classification_layer_size_in_generator,
+                                      })
 
     # roberta, albert, linear-reinforce, roberta-reinforce, bert-reinforce
     classifier_config_dict = {}
@@ -62,7 +75,7 @@ def inititalize_models(args, tokenizer):
     generator_model_dict = {'config': generator_config}
     if args.generator_model_type in ['roberta', 'albert']:
         generator_model_dict.update({'device': args.device})
-    if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce', 'bert-reinforce']:
+    if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce', 'bert-reinforce', 'seq-reinforce']:
         generator_model_dict.update({'pretrained_model_name_or_path': args.generator_model_name})
 
     # roberta, albert, linear-reinforce, roberta-reinforce, 'bert-reinforce'
