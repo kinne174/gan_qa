@@ -5,7 +5,7 @@ from sklearn.metrics import accuracy_score
 import logging
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.data.sampler import SequentialSampler
-from tqdm import tqdm
+from tqdm import tqdm, trange
 import nltk
 from nltk import ngrams
 from nltk.translate.bleu_score import corpus_bleu
@@ -154,17 +154,29 @@ def stream_data(args, generatorM, attentionM, subset, oracleM_dir):
     # for n in num_of_grams:
     #     all_saved_data['fake {}-gram counter'.format(n)] = Counter()
     #     all_saved_data['real {}-gram counter'.format(n)] = Counter()
+    all_saved_data['fake words'] = Counter()
+    all_saved_data['real words'] = Counter()
 
-    _, generator_model_class = generator_models_and_config_classes['roberta-reinforce']
+    generator_config_class, generator_model_class = generator_models_and_config_classes['roberta-reinforce']
     # roberta, albert, seq, roberta-reinforce
-    generator_model_dict = {'config': oracleM_dir,
-                            'pretrained_model_name_or_path': oracleM_dir}
+    generator_config_dict = {'pretrained_model_name_or_path': oracleM_dir}
+    generator_config_dict.update({'output_hidden_states': True,
+                                  'task_specific_params': {
+                                      'classification_layer_size': args.classification_layer_size_in_generator,
+                                      'temperature': 1.,
+                                      'is_oracleM': True}})
+    generator_config = generator_config_class.from_pretrained(**generator_config_dict)
+    generator_model_dict = {'config': generator_config}
+    if args.generator_model_type in ['roberta', 'albert', 'roberta-reinforce', 'bert-reinforce']:
+        generator_model_dict.update({'pretrained_model_name_or_path': oracleM_dir})
     oracleM = generator_model_class.from_pretrained(**generator_model_dict)
     oracleM.to(args.device)
 
     all_saved_data['all_perplexities'] = None
 
     all_saved_data['all_fake_input_ids'] = None
+
+    logger.info('Total iterations: {}'.format(len(eval_dataset)))
 
     with torch.no_grad():
         logger.info('Starting Evaluation!')
@@ -195,7 +207,13 @@ def stream_data(args, generatorM, attentionM, subset, oracleM_dir):
                               (1 - my_attention_mask) * inputs['input_ids']).long()
 
             fake_input_ids = fake_input_ids.view(-1, fake_input_ids.shape[-1])
-            # real_input_ids = inputs['input_ids'].view(-1, inputs['input_ids'].shape[-1])
+            real_input_ids = inputs['input_ids'].view(-1, inputs['input_ids'].shape[-1])
+            my_attention_mask = my_attention_mask.view(-1, my_attention_mask.shape[-1])
+
+            # my_attention_mask_nonzero = my_attention_mask.nonzero(as_tuple=True)
+            all_saved_data['real_words'].update(fake_input_ids[my_attention_mask.nonzero(as_tuple=True)])
+            all_saved_data['fake_words'].update(real_input_ids[my_attention_mask.nonzero(as_tuple=True)])
+
 
             oracle_vocabulary_logprobs = oracleM(masked_input_ids, inputs['attention_mask'],
                                                  inputs['token_type_ids'], inputs['classification_labels'])
@@ -211,13 +229,6 @@ def stream_data(args, generatorM, attentionM, subset, oracleM_dir):
             else:
                 all_saved_data['all_perplexities'] = torch.cat((all_saved_data['all_perplexities'], current_perplexities), dim=0)
 
-            # assert fake_input_ids.shape[0] == real_input_ids.shape[0]
-            # for i in range(fake_input_ids.shape[0]):
-            #     TODO update this to refelct maskgan's way of doing this
-                # for n in num_of_grams:
-                #     all_saved_data['fake {}-gram counter'.format(n)].update(list(ngrams(fake_input_ids[i, :].detach().cpu().tolist(), n)))
-                #     all_saved_data['real {}-gram counter'.format(n)].update(list(ngrams(real_input_ids[i, :].detach().cpu().tolist(), n)))
-
             if all_saved_data['all_fake_input_ids'] is None:
                 all_saved_data['all_fake_input_ids'] = fake_input_ids.detach().cpu()
             else:
@@ -229,37 +240,47 @@ def stream_data(args, generatorM, attentionM, subset, oracleM_dir):
     return all_saved_data
 
 
-def write_out_discriminator_eval(all_saved_data, tokenizer, discriminator_filename):
+def write_out_discriminator_eval(all_saved_data, tokenizer):
     num_of_grams = [2, 3, 4]
     n_samples = 100
     n_words = 20
     results = {}
 
-    for _ in range(n_samples):
-        sentence_ind = torch.LongTensor(1).random_(all_saved_data['all_real_input_ids'].shape[0]).item()
-
-        real_sentence = tokenizer.decode(all_saved_data['all_real_input_ids'][sentence_ind, :].squeeze()).split()
-        fake_sentence = tokenizer.decode(all_saved_data['all_fake_input_ids'][sentence_ind, :].squeeze()).split()
-
-        word_ind = torch.LongTensor(1).random_(min(len(real_sentence), len(fake_sentence)) - n_words).item()
-
-        for n in num_of_grams:
-            all_saved_data['fake {}-gram counter'.format(n)].update(list(ngrams(fake_sentence[word_ind:(word_ind + n_words)], n)))
-            all_saved_data['real {}-gram counter'.format(n)].update(list(ngrams(real_sentence[word_ind:(word_ind + n_words)], n)))
-
     for n in num_of_grams:
-        results['real {}-gram'.format(n)] = len(all_saved_data['real {}-gram counter'.format(n)]) / sum(
-            all_saved_data['real {}-gram counter'.format(n)].values())
-        results['fake {}-gram'.format(n)] = len(all_saved_data['fake {}-gram counter'.format(n)]) / sum(
-            all_saved_data['fake {}-gram counter'.format(n)].values())
+        all_saved_data['fake {}-gram counter'.format(n)] = Counter()
+        all_saved_data['real {}-gram counter'.format(n)] = Counter()
+
+        # TODO better way to measure mode collapse
+
+
+    # for _ in trange(n_samples):
+    #     sentence_ind = torch.LongTensor(1).random_(all_saved_data['all_real_input_ids'].shape[0]).item()
+    #
+    #     real_sentence = tokenizer.decode(all_saved_data['all_real_input_ids'][sentence_ind, :].squeeze()).split()
+    #     fake_sentence = tokenizer.decode(all_saved_data['all_fake_input_ids'][sentence_ind, :].squeeze()).split()
+    #
+    #     word_ind = torch.LongTensor(1).random_(min(len(real_sentence), len(fake_sentence)) - n_words).item()
+    #
+    #     for n in num_of_grams:
+    #         all_saved_data['fake {}-gram counter'.format(n)].update(list(ngrams(fake_sentence[word_ind:(word_ind + n_words)], n)))
+    #         all_saved_data['real {}-gram counter'.format(n)].update(list(ngrams(real_sentence[word_ind:(word_ind + n_words)], n)))
+    #
+    # for n in num_of_grams:
+    #     results['real {}-gram'.format(n)] = len(all_saved_data['real {}-gram counter'.format(n)]) / sum(
+    #         all_saved_data['real {}-gram counter'.format(n)].values())
+    #     results['fake {}-gram'.format(n)] = len(all_saved_data['fake {}-gram counter'.format(n)]) / sum(
+    #         all_saved_data['fake {}-gram counter'.format(n)].values())
+
+    results['percent unique real words'] = len(all_saved_data['real words']) / sum(all_saved_data['real words'].values())
+    results['percent unique fake words'] = len(all_saved_data['fake words']) / sum(all_saved_data['fake words'].values())
 
     m, s = torch.std_mean(all_saved_data['all_perplexities'])
     results['perplexity mean'] = m.item()
     results['perplexity one standard deviation'] = s.item()
 
-    bleu_score = corpus_bleu(all_saved_data['all_real_input_ids'].tolist(), all_saved_data['all_fake_input_ids'].tolist())
-
-    results['bleu4 score'] = bleu_score
+    # bleu_score = corpus_bleu(all_saved_data['all_real_input_ids'].tolist(), all_saved_data['all_fake_input_ids'].tolist())
+    #
+    # results['bleu4 score'] = bleu_score
 
 
     embed = hub.Module("https://tfhub.dev/google/universal-sentence-encoder/2")
@@ -279,12 +300,8 @@ def write_out_discriminator_eval(all_saved_data, tokenizer, discriminator_filena
 
     results['fid score'] = distance_fid
 
-    if results:
-        with open(discriminator_filename, 'w') as df:
-            for description, value in results.items():
-                df.write('{}: {:.4f}\n'.format(description, value))
-
-                logger.info('{}: {:.4f}\n'.format(description, value))
+    for description, value in results.items():
+        logger.info('{}: {:.4f}\n'.format(description, value))
 
     return -1
 
