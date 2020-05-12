@@ -1,6 +1,6 @@
-import os
+import os, glob
 from random import shuffle
-import json_lines
+import json_lines, json
 import tqdm
 import logging
 import codecs
@@ -10,12 +10,13 @@ from nltk.corpus import stopwords
 import getpass
 from collections import Counter
 from string import punctuation
+import csv
 
 logger = logging.getLogger(__name__)
 
 stop_words = set(stopwords.words('english'))
 
-class ArcExample(object):
+class InputExample(object):
 
     def __init__(self, example_id, question, contexts, endings, classification_label, sentences_type):
         self.example_id = example_id
@@ -29,9 +30,92 @@ class ArcExample(object):
 def example_loader(args, subset):
     # returns an object of type ArcExample similar to hugging face transformers
 
+    if args.task_name == 'arc':
+        return arc_example_loader(args, subset)
+
+    if args.task_name == 'race':
+        return race_example_loader(args, subset)
+
+    if args.task_name == 'swag':
+        return swag_example_loader(args, subset)
+
+def race_example_loader(args, subset):
+    all_examples = []
+
+    high = os.path.join(args.data_dir, "RACE/{}/high".format(subset))
+    middle = os.path.join(args.data_dir, "RACE/{}/middle".format(subset))
+
+    race_dirs = [high, middle]
+    if args.task_difficulty == 'high':
+        race_dirs = [high]
+    elif args.task_difficulty == 'middle':
+        race_dirs = [middle]
+
+    for race_dir in race_dirs:
+        files = glob.glob(race_dir + '/*txt')
+        for file in tqdm.tqdm(files, desc='Creating RACE data from {}'.format(race_dir)):
+            with open(file, 'r', encoding='utf-8') as handle:
+                data_raw = json.load(handle)
+                data_raw['race_id'] = '{}-{}'.format(subset, file)
+
+            article = data_raw['article']
+            for i in range(len(data_raw['answers'])):
+                truth = str(ord(data_raw['answers'][i]) - ord('A'))
+                question = data_raw['questions'][i]
+                options = data_raw['options'][i]
+
+                all_examples.append(
+                    InputExample(
+                        example_id=data_raw['race_id'],
+                        question=question,
+                        contexts=[article, article, article, article],
+                        endings=[options[0], options[1], options[2], options[3]],
+                        classification_label=truth,
+                        sentences_type=1
+                    )
+                )
+
+    return all_examples
+
+
+def swag_example_loader(args, subset):
+    subset = 'val' if subset == 'dev' else subset
+
+    data_filename = os.path.join(args.data_dir, 'SWAG/{}.csv'.format(subset))
+
+    with open(data_filename, 'r', encoding='utf-8') as handle:
+        lines = list(csv.reader(handle))
+
+    if subset == 'train' and not lines[0][-1] == 'label':
+        raise Exception('Input file must contain label column for training!')
+
+    all_examples = []
+    for line in lines[1:]:
+        all_examples.append(
+            InputExample(
+                example_id=line[2],
+                question=line[5],
+                contexts=[line[4], line[4], line[4], line[4]],
+                endings=[line[7], line[8], line[9], line[10]],
+                classification_label=line[11],
+                sentences_type=1
+            )
+        )
+
+    return all_examples
+
+def arc_example_loader(args, subset):
     # bad ids, each has at least one answer that does not contain any context
     # if another question answer task is used this will need to be fixed
     bad_ids = ['OBQA_9-737', 'OBQA_45', 'OBQA_750', 'OBQA_7-423', 'OBQA_619', 'OBQA_9-778', 'OBQA_10-201', 'OBQA_10-791', 'OBQA_10-1138', 'OBQA_12-717', 'OBQA_13-129', 'OBQA_13-468', 'OBQA_13-957', 'OBQA_14-10', 'OBQA_14-949', 'OBQA_14-1140', 'OBQA_14-1274']
+
+    difficulty_id = None
+    if args.task_difficulty == 'challenge':
+        difficulty_id = 'ARCCH'
+    elif args.task_difficulty == 'easy':
+        difficulty_id = 'ARCEZ'
+
+
 
     all_examples = []
     data_filename = os.path.join(args.data_dir, '{}.jsonl'.format(subset))
@@ -93,8 +177,11 @@ def example_loader(args, subset):
             if not question_in_domain and len(args.domain_words):
                 continue
 
+            if difficulty_id is not None and difficulty_id not in id:
+                continue
+
             # update list of examples
-            all_examples.append(ArcExample(example_id=id,
+            all_examples.append(InputExample(example_id=id,
                                            question=question_text,
                                            contexts=contexts,
                                            endings=answer_texts,
@@ -185,7 +272,7 @@ def example_loader(args, subset):
 
 
                 # update list of examples
-                all_examples.append(ArcExample(example_id='{}-{}'.format(kw, i),
+                all_examples.append(InputExample(example_id='{}-{}'.format(kw, i),
                                                question=question_text,
                                                contexts=contexts,
                                                endings=answer_texts,
