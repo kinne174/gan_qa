@@ -23,7 +23,7 @@ from utils_embedding_model import feature_loader, load_features, save_features
 from utils_real_data import example_loader
 from utils_reinforce import train_classifier_discriminator, train_generator, word_index_selector, my_CrossEntropyLoss
 from utils_model_maitenence import save_models, load_models, inititalize_models
-from utils_ablation import ablation, ablation_discriminator, discriminator_eval
+from utils_ablation import ablation, ablation_discriminator
 from utils_generator import Weight_Clipper
 from utils_eval import write_out_discriminator_eval, stream_data
 
@@ -88,17 +88,17 @@ def label_map(labels, num_choices):
     return answers
 
 
-def flip_labels(classification_labels=None, discriminator_labels=None):
-
-    out_c_labels = None
-    out_d_labels = None
-
-    if classification_labels is not None:
-        out_c_labels = 1 - classification_labels
-    if discriminator_labels is not None:
-        out_d_labels = discriminator_labels * -1
-
-    return out_c_labels, out_d_labels
+# def flip_labels(classification_labels=None, discriminator_labels=None):
+#
+#     out_c_labels = None
+#     out_d_labels = None
+#
+#     if classification_labels is not None:
+#         out_c_labels = 1 - classification_labels
+#     if discriminator_labels is not None:
+#         out_d_labels = discriminator_labels * -1
+#
+#     return out_c_labels, out_d_labels
 
 
 def load_and_cache_features(args, tokenizer, subset):
@@ -106,12 +106,16 @@ def load_and_cache_features(args, tokenizer, subset):
 
     cutoff_str = '' if args.cutoff is None else '_cutoff{}'.format(args.cutoff)
     corpus_str = '_WithCorpus' if (args.use_corpus and subset == 'train') else ''
-    cached_features_filename = os.path.join(args.cache_dir, '{}_{}_{}{}{}{}'.format(subset,
-                                                                                    args.tokenizer_name,
-                                                                                    args.max_length,
-                                                                                    '_'+'-'.join(args.domain_words),
-                                                                                    cutoff_str,
-                                                                                    corpus_str))
+    difficulty_str = '_{}'.format(args.task_difficulty) if args.task_difficulty is not None else ''
+    task_str = '{}_'.format(args.task_name) if not args.task_name == 'arc' else ''
+    cached_features_filename = os.path.join(args.cache_dir, '{}{}_{}_{}{}{}{}{}'.format(task_str,
+                                                                                        subset,
+                                                                                        args.tokenizer_name,
+                                                                                        args.max_length,
+                                                                                        '_'+'-'.join(args.domain_words),
+                                                                                        cutoff_str,
+                                                                                        difficulty_str,
+                                                                                        corpus_str))
     if os.path.exists(cached_features_filename) and not args.overwrite_cache_dir:
         logger.info('Loading features from ({})'.format(cached_features_filename))
         features = load_features(cached_features_filename)
@@ -213,11 +217,6 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
             masked_input_ids, my_attention_mask, fake_discriminator_labels = attentionM(real_inputs['input_ids'], real_inputs['my_attention_mask'])
             assert not torch.all(torch.eq(masked_input_ids, real_inputs['input_ids']))
 
-            # flip labels to represent the wrong answers are actually right
-            fake_classification_labels, real_discriminator_labels = \
-                flip_labels(classification_labels=real_inputs['classification_labels'],
-                            discriminator_labels=fake_discriminator_labels)
-
             generator_loss, fake_input_ids, (logits_gen_d, logits_gen_c) = train_generator(args,
                                                                                            masked_input_ids,
                                                                                            real_inputs['attention_mask'],
@@ -234,11 +233,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
             # assign fake_input_ids to fake_inputs
             fake_input_ids = fake_input_ids.to(args.device)
 
-            if generator_loss is not None:
+            if args.train_generator and generator_loss is not None:
                 generator_loss /= args.accumulation_steps
                 generator_loss.backward()
 
-            accumulated_error_generator += generator_loss.detach().item()
+                accumulated_error_generator += generator_loss.detach().item()
 
             num_training_correct_generator_discriminator += int(torch.sum(
                 torch.eq(my_attention_mask, tanh(logits_gen_d).sign())[
@@ -399,15 +398,11 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                 if not args.quiet:
                     logger.info('Running totals for current epoch {}, after update {}'.format(epoch,
                                                                                               update_step))
-                    # print('\nRunning totals for current epoch {}, after update {}'.format(epoch,
-                    #                                                                     update_step))
                     for m in messages.values():
                         logger.info(m)
-                        # print(m)
 
                 if args.do_ablation_discriminator:
                     ablation_dir = os.path.join(args.output_dir, 'ablation_train')
-
                     if not os.path.exists(ablation_dir):
                         os.makedirs(ablation_dir)
 
@@ -417,12 +412,40 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
                         os.remove(ablation_filename)
 
                     ablation_fake_inputs = {'input_ids': fake_input_ids,
-                                            'my_attention_mask': my_attention_mask}
+                                            'my_attention_mask': my_attention_mask,}
                     ablation_real_inputs = {'input_ids': real_inputs['input_ids'],
                                             'attention_mask': real_inputs['attention_mask']}
 
                     ablation_discriminator(args, ablation_filename, tokenizer, ablation_fake_inputs, ablation_real_inputs,
                                            tanh(logits['logits_fake_d']), tanh(logits['logits_real_d']), tanh(logits_gen_d))
+
+                if args.do_ablation_classifier:
+                    ablation_dir = os.path.join(args.output_dir, 'ablation_train')
+                    if not os.path.exists(ablation_dir):
+                        os.makedirs(ablation_dir)
+
+                    ablation_filename = os.path.join(ablation_dir, 'checkpoint_{}_{}_classifier.txt'.format(update_step, '-'.join(
+                        args.domain_words)))
+                    if os.path.exists(ablation_filename):
+                        os.remove(ablation_filename)
+                    with torch.no_grad():
+                        fake_vocabulary_probs_switch = generatorM(masked_input_ids, real_inputs['attention_mask'],
+                                                                  real_inputs['token_type_ids'],
+                                                                  1 - real_inputs['classification_labels'])
+                        # choose words at random or argmax or based on probability
+                        fake_action_switch, _ = word_index_selector(fake_vocabulary_probs_switch, 'sample_log', -1)
+                        fake_input_ids_switch = (my_attention_mask * fake_action_switch +
+                                                 (1 - my_attention_mask) * real_inputs['input_ids']).long()
+
+                        fake_predictions_switch = classifierM(fake_input_ids_switch, real_inputs['attention_mask'],
+                                                              real_inputs['token_type_ids'])
+
+                    ablation_fake_inputs = {'input_ids': fake_input_ids,
+                                            'input_ids_switch': fake_input_ids_switch,
+                                            'my_attention_mask': my_attention_mask}
+
+                    assert -1 == ablation(args, ablation_filename, tokenizer, ablation_fake_inputs, real_inputs,
+                                          logits['logits_real_c'], logits['logits_fake_c'], fake_predictions_switch)
 
                 accumulated_error_real_d = 0
                 accumulated_error_fake_d = 0
@@ -440,9 +463,9 @@ def train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discrim
 
                     generatorO.step()
 
-                    if args.do_generator_weight_clipping:
-                        generatorM._modules['correct_elementwise'].apply(weight_clipper)
-                        generatorM._modules['incorrect_elementwise'].apply(weight_clipper)
+                    # if args.do_generator_weight_clipping:
+                    #     generatorM._modules['correct_elementwise'].apply(weight_clipper)
+                    #     generatorM._modules['incorrect_elementwise'].apply(weight_clipper)
 
                 # update classifier/discriminator parameters
                 if (update_step + 1) % args.classifier_hop_steps == 0:
@@ -512,6 +535,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
     logger.info('Starting Evaluation!')
     logger.info('Number of examples: {}'.format(len(eval_dataset)))
     logger.info('Relevant Checkpoint is {}'.format(checkpoint))
+    logger.info('Relevant logging number is {}'.format(args.logging_file_number))
     # print('Starting Evaluation!\nNumber of examples: {}.\nRelevant Checkpoint is {}.'.format(len(eval_dataset),
     #                                                                                          checkpoint))
 
@@ -542,19 +566,21 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
                       }
 
             masked_input_ids, my_attention_mask, fake_discriminator_labels = attentionM(inputs['input_ids'], inputs['my_attention_mask'])
-            # fake_inputs = {k: v.to(args.device) if hasattr(v, 'to') else v for k, v in fake_inputs.items()}
             fake_vocabulary_probs = generatorM(masked_input_ids, inputs['attention_mask'],
                                                inputs['token_type_ids'], inputs['classification_labels'])
+            fake_vocabulary_probs_switch = generatorM(masked_input_ids, inputs['attention_mask'],
+                                               inputs['token_type_ids'], 1-inputs['classification_labels'])
 
             # choose words at random or argmax or based on probability
             fake_action, _ = word_index_selector(fake_vocabulary_probs, 'sample_log', -1)
+            fake_action_switch, _ = word_index_selector(fake_vocabulary_probs_switch, 'sample_log', -1)
             fake_input_ids = (my_attention_mask * fake_action +
                               (1 - my_attention_mask) * inputs['input_ids']).long()
-
-            # flip labels to represent the wrong answers are actually right
-            # fake_classification_labels, _ = flip_labels(inputs['classification_labels'], None)
+            fake_input_ids_switch = (my_attention_mask * fake_action_switch +
+                                    (1 - my_attention_mask) * inputs['input_ids']).long()
 
             fake_predictions = classifierM(fake_input_ids, inputs['attention_mask'], inputs['token_type_ids'])
+            fake_predictions_switch = classifierM(fake_input_ids_switch, inputs['attention_mask'], inputs['token_type_ids'])
             real_predictions = classifierM(inputs['input_ids'], inputs['attention_mask'], inputs['token_type_ids'])
 
             fake_error = my_CrossEntropyLoss(fake_predictions, inputs['classification_labels'].nonzero()[:, 1].long(),
@@ -574,12 +600,12 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
                 all_fake_predictions = np.append(all_fake_predictions, fake_predictions.detach().cpu().numpy(), axis=0)
                 all_labels = np.append(all_labels, inputs['classification_labels'].detach().cpu().numpy(), axis=0)
 
-            if args.do_ablation_classifier:  # and batch_ind in ablation_indices:
+            if args.do_ablation_classifier:
                 ablation_fake_inputs = {'input_ids': fake_input_ids,
                                         'my_attention_mask': my_attention_mask,
-                                        'classification_labels': inputs['classification_labels']}
+                                        'input_ids_switch': fake_input_ids_switch}
                 assert -1 == ablation(args, ablation_filename, tokenizer, ablation_fake_inputs, inputs,
-                                      real_predictions, fake_predictions)
+                                      real_predictions, fake_predictions, fake_predictions_switch)
 
             num_steps += 1
 
@@ -606,7 +632,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
         logger.info('The {} is {}'.format(key, round(val, 3)))
         # print('The {} is {}'.format(key, round(val, 3)))
 
-    with open(args.results_filename, 'r') as rf:
+    with open(os.path.join(args.results_folder, 'results_{}.txt'.format(subset)), 'r') as rf:
         opener = next(rf)
         all_score_tuples = [make_tuple(line) for ind, line in enumerate(rf) if ind > 0 and bool(line)]
         rf.close()
@@ -614,7 +640,7 @@ def evaluate(args, classifierM, generatorM, attentionM, tokenizer, checkpoint, t
     all_score_tuples.append((real_accuracy, args.logging_file_number, checkpoint))
     all_score_tuples.sort(key=lambda t: t[0], reverse=True)
 
-    with open(args.results_filename, 'w') as rf:
+    with open(os.path.join(args.results_folder, 'results_{}.txt'.format(subset)), 'w') as rf:
         rf.write('{}\n'.format(opener))
         for tup in all_score_tuples:
             rf.write('{}\n'.format(str(tup)))
@@ -629,24 +655,48 @@ def main():
             self.data_dir = '../ARC/ARC-with-context/'
             self.output_dir = 'output/'
             self.cache_dir = 'saved/'
+            self.task_name = 'arc'
+            self.task_difficulty = 'challenge'
 
-            self.transformer_name = 'bert'
-            self.tokenizer_name = 'bert-base-uncased'
-            self.generator_model_type = 'bert-reinforce'
-            self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/all_bert-base-uncased_v2/'
-            # self.generator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/bert-reinforce-bert-reinforce-/bert-generator-105/'
+            self.transformer_name = 'roberta'
+            self.forward_reward = False
+
+            if self.transformer_name == 'roberta':
+                self.tokenizer_name = 'roberta-base'
+                self.generator_model_type = 'roberta-reinforce'
+                self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/all_roberta-base/'
+                self.classifier_model_type = 'roberta-reinforce'
+                # self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/saved/roberta-base-r/'
+                # self.classifier_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-/85/roberta-classifier-480/'
+                self.classifier_model_name = 'roberta-base'
+                self.oracleM_directory = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/all_roberta-base/'
+
+            else:
+                self.tokenizer_name = 'bert-base-uncased'
+                self.generator_model_type = 'bert-reinforce'
+                self.generator_model_name = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/all_bert-base-uncased/'
+                # self.generator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/bert-reinforce-bert-reinforce-/134/bert-generator-150/'
+                self.classifier_model_type = 'bert-reinforce'
+                self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/saved/bert-base-uncased/'
+                # self.classifier_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/bert-reinforce-bert-reinforce-moon_earth/53/bert-classifier-60/'
+                # self.classifier_model_name = 'bert-base-uncased'
+                self.oracleM_directory = '/home/kinne174/private/Output/transformers_gpu/language_modeling/saved/all_bert-base-uncased/'
+
+            # self.generator_model_type = 'seq-reinforce'
+            # self.generator_model_name = None
+            # self.generator_hidden_size = 512
+            # self.generator_embedding_size = 50
+            # self.generator_num_layers = 2
+            # self.forward_reward = True
+
             self.attention_model_type = 'essential-reinforce'
 
-            self.classifier_model_type = 'bert-reinforce'
-            self.classifier_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/bert-reinforce-bert-reinforce-/saved/my_method/21/bert-classifier-70/'
-            # self.classifier_model_name = '/home/kinne174/private/Output/transformers_gpu/classification/saved/bert-base-uncased-r/'
-            # self.classifier_model_name = None
             self.classifier_embedding_dim = 50
-            self.classifier_hidden_dim = 512
-            self.classifier_num_layers = 7
+            self.classifier_hidden_dim = 256
+            self.classifier_num_layers = 6
 
             self.discriminator_model_type = 'lstm-reinforce'
-            # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-/saved/my_method/roberta-discriminator-140/'
+            # self.discriminator_model_name = '/home/kinne174/private/PythonProjects/gan_qa/output/roberta-reinforce-roberta-reinforce-/49/roberta-discriminator-90/'
             self.discriminator_model_name = None
             self.discriminator_embedding_type = None
             self.discriminator_embedding_dim = 50
@@ -654,52 +704,50 @@ def main():
             self.discriminator_num_layers = 2
             self.discriminator_dropout = 0.10
 
-            self.epochs = 12
+            self.epochs = 60
             self.cutoff = None
             self.do_evaluate_test = False
-            self.do_evaluate_dev = True
+            self.do_evaluate_dev = False
             self.do_train = True
             self.use_gpu = True
             self.overwrite_output_dir = True
             self.overwrite_cache_dir = False
-            self.seed = 1234
+            self.seed = 4
             self.max_length = 256
             self.do_lower_case = True
             self.essential_terms_hidden_dim = 512
             self.evaluate_all_models = False
             self.quiet = False
-            self.cuda_num = 7
+            self.cuda_num = 5
 
             self.domain_words = []
             self.evaluate_during_training = True
             self.learning_rate_classifier = 9e-5
-            self.learning_rate_generator = 9e-6
-            self.learning_rate_discriminator = 9.5e-4
-            self.batch_size = 5
-            self.save_steps = 15
-            self.essential_mu_p = 0.25
+            self.learning_rate_generator = 9.5e-5
+            self.learning_rate_discriminator = 9e-4
+            self.batch_size = 4
+            self.save_steps = 25
+            self.essential_mu_p = 0.50
             self.use_corpus = False
-            self.accumulation_steps = 100
-            self.classifier_hop_steps = 10
-            self.discriminator_hop_steps = 3
-            self.train_classifier = False
-            self.train_discriminator = True
-            self.train_generator = True
+            self.accumulation_steps = 60
+            self.classifier_hop_steps = 3
+            self.discriminator_hop_steps = 2
+            self.train_classifier = True
+            self.train_discriminator = False
+            self.train_generator = False
             self.reinforce_gamma = 0.8
-            self.do_ablation_discriminator = True
-            self.do_ablation_classifier = True
+            self.do_ablation_discriminator = False
+            self.do_ablation_classifier = False
             self.do_prevaluation = False
             self.lambda_baseline = 0.15
-            self.rewards_stop = 0.85
-            self.rewards_start = 0.8
-            self.rewards_squeeze = 0.1
-            self.classification_stop = 0.00
-            self.classification_start = 0.00
-            self.classification_squeeze = 0.20
-            self.generator_resampling_steps = 5
-            self.do_generator_weight_clipping = True
-
-            self.oracleM_directory = None
+            self.rewards_stop = 0.50
+            self.rewards_start = 0.50
+            self.rewards_squeeze = 0.10
+            self.classification_stop = 0.0
+            self.classification_start = 0.0
+            self.classification_squeeze = 0.05
+            self.generator_resampling_steps = 1
+            self.classification_layer_size_in_generator = 20
 
         # TODO pre train discriminator on generator while not updating generator parameters,
         #  look into getting probabilities of generator from only masking current token and leaving everything else
@@ -750,14 +798,16 @@ def main():
                         proposed_output_dir))
 
     # set up results folder before changing output_dir
-    results_filename = os.path.join(args.output_dir, folder_name_output, 'results/results.txt')
-    if not os.path.exists(results_filename):
-        os.makedirs(os.path.join(args.output_dir,  folder_name_output, 'results'))
-        with open(results_filename, 'w') as rf:
-            rf.write('Results for {}'.format('-'.join(args.domain_words)))
-            rf.close()
+    for subset in ['train', 'dev', 'test']:
+        results_filename = os.path.join(args.output_dir, folder_name_output, 'results/results_{}.txt'.format(subset))
+        if not os.path.exists(os.path.join(args.output_dir, folder_name_output, 'results')):
+            os.makedirs(os.path.join(args.output_dir,  folder_name_output, 'results'))
+        if not os.path.exists(results_filename):
+            with open(results_filename, 'w') as rf:
+                rf.write('Results for {} in subset {}'.format('-'.join(args.domain_words), subset))
+                rf.close()
 
-    args.results_filename = results_filename
+    args.results_folder = os.path.join(args.output_dir, folder_name_output, 'results')
 
     args.output_dir = proposed_output_dir
 
@@ -795,6 +845,9 @@ def main():
         # initialize and return models
         generatorM, attentionM, classifierM, discriminatorM = inititalize_models(args, tokenizer)
 
+        # set seen words for generator
+        # generatorM.set_known_words_masking(dataset.tensors[0])
+
         attentionM, generatorM, classifierM, update_step = train(args, tokenizer, dataset, generatorM, attentionM, classifierM, discriminatorM)
         models_checkpoints = [((attentionM, generatorM, classifierM), update_step)]
 
@@ -804,7 +857,7 @@ def main():
                 models_checkpoints = load_models(args, tokenizer)
             else:
                 generatorM, attentionM, classifierM, _ = inititalize_models(args, tokenizer)
-                models_checkpoints = [((generatorM, attentionM, classifierM), -1)]
+                models_checkpoints = [((attentionM, generatorM, classifierM), -1)]
 
         for (attentionM, generatorM, classifierM), cp in models_checkpoints:
 
@@ -814,16 +867,20 @@ def main():
             attentionM.to(args.device)
             classifierM.to(args.device)
 
-            assert -1 == evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
+            # assert -1 == evaluate(args, classifierM, generatorM, attentionM, tokenizer, cp)
 
-            assert args.oracleM_directory is not None
-            saved_data = stream_data(args, generatorM, attentionM, subset='dev', oracleM_dir=args.oracleM_directory)
-            discriminator_filename = os.path.join(args.output_dir, 'generator_eval', 'generator_eval-{}.txt'.format(cp))
-            assert -1 == write_out_discriminator_eval(saved_data, tokenizer, discriminator_filename)
-
+            if args.oracleM_directory is not None:
+                saved_data = stream_data(args, generatorM, attentionM, subset='dev', oracleM_dir=args.oracleM_directory)
+                # discriminator_filename = os.path.join(args.output_dir, 'generator_eval', 'generator_eval-{}.txt'.format(cp))
+                assert -1 == write_out_discriminator_eval(saved_data, tokenizer)
 
     if args.do_evaluate_test:
-        models_checkpoints = load_models(args, tokenizer) if not len(models_checkpoints) else models_checkpoints
+        if not len(models_checkpoints):
+            if args.evaluate_all_models:
+                models_checkpoints = load_models(args, tokenizer)
+            else:
+                generatorM, attentionM, classifierM, _ = inititalize_models(args, tokenizer)
+                models_checkpoints = [((attentionM, generatorM, classifierM), -1)]
 
         for (attentionM, generatorM, classifierM), cp in models_checkpoints:
 
