@@ -123,7 +123,6 @@ class DiscriminatorReinforcement(nn.Module):
         self.linear2.add_module('linear_fc_2', nn.Linear(config.hidden_dim, 1))
         # self.linear2.add_module('tanh', nn.Tanh())
 
-
     def embedding_matrix_init(self):
         assert hasattr(self, "config")
 
