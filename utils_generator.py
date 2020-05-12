@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
-from transformers import (BertForMaskedLM, DistilBertForMaskedLM, RobertaForMaskedLM,
-                          BertConfig, DistilBertConfig, RobertaConfig, AlbertConfig,
+from transformers import (BertForMaskedLM, RobertaForMaskedLM,
+                          BertConfig, RobertaConfig, AlbertConfig,
                           AlbertForMaskedLM)
 from transformers import PretrainedConfig
 from torch.nn import functional as F
 import logging
-from tqdm import trange
+from collections import Counter
 import math
+import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +206,165 @@ class Seq2Seq(nn.Module):
 
         return out_dict
 
+class Seq2SeqReinforce(nn.Module):
+    def __init__(self, config):
+        super(Seq2SeqReinforce, self).__init__()
+        self.config = config
+
+        self.embedding = nn.Embedding(config.vocab_size, config.embedding_dim)
+
+        # self.encoder = nn.Sequential()
+        # self.encoder.add_module('encoder_embedding', embedding)
+        # self.encoder.add_module('encoder_dropout', nn.Dropout(p=0.10))
+        self.encoder = nn.LSTM(config.embedding_dim, config.encoder_decoder_hidden_dim,
+                                                        batch_first=True, num_layers=config.num_layers,
+                                                        dropout=0.10)
+
+        # self.decoder = nn.Sequential()
+        # self.decoder.add_module('decoder_embedding', embedding)
+        # self.decoder.add_module('decoder_dropout', nn.Dropout(p=0.10))
+        self.decoder = nn.LSTM(config.embedding_dim, config.encoder_decoder_hidden_dim,
+                                                        batch_first=True, num_layers=config.num_layers,
+                                                        dropout=0.10)
+
+        self.classification_layer = nn.Linear(1, config.classification_layer_size, bias=True)
+
+        self.fully_connected = nn.Sequential()
+        self.fully_connected.add_module('linear1', nn.Linear(config.encoder_decoder_hidden_dim + config.classification_layer_size,
+                                                             config.encoder_decoder_hidden_dim + config.classification_layer_size))
+        self.fully_connected.add_module('relu', nn.ReLU())
+        self.fully_connected.add_module('layernorm', nn.LayerNorm(config.encoder_decoder_hidden_dim + config.classification_layer_size))
+        self.fully_connected.add_module('dropout', nn.Dropout(p=0.10))
+        self.fully_connected.add_module('linear2', nn.Linear(config.encoder_decoder_hidden_dim + config.classification_layer_size, config.vocab_size))
+
+        self.log_softmax = nn.LogSoftmax(dim=-1)
+
+        self.mask_id = config.mask_id
+        self.one_hot_of_known_words = None
+        self.vocab_size = config.vocab_size
+
+    def save_pretrained(self, save_directory):
+        assert os.path.isdir(
+            save_directory
+        ), "Saving path should be a directory where the model and configuration can be saved"
+
+        model_to_save = self
+
+        # If we save using the predefined names, we can load using `from_pretrained`
+        output_model_file = os.path.join(save_directory, 'model_weights.pt')
+        torch.save(model_to_save.state_dict(), output_model_file)
+
+        assert hasattr(model_to_save, "config")
+        config_filename = os.path.join(save_directory, 'config.json')
+        with open(config_filename, 'w') as cf:
+            json.dump(vars(model_to_save.config), cf)
+
+        logger.info("Model weights and config saved in {}".format(output_model_file))
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, config):
+        if pretrained_model_name_or_path is not None and os.path.exists(pretrained_model_name_or_path):
+            config_filename = os.path.join(pretrained_model_name_or_path, 'config.json')
+            with open(config_filename, 'r') as cf:
+                config_json = json.load(cf)
+            config = GeneratorConfig(**config_json)
+
+            model_to_return = cls(config)
+            model_load_filename = os.path.join(pretrained_model_name_or_path, 'model_weights.pt')
+            model_to_return.load_state_dict(torch.load(model_load_filename))
+
+            return model_to_return
+
+        return cls(config)
+
+    def set_known_words_masking(self, input_ids):
+        counter = Counter(input_ids.view(-1).cpu().numpy())
+        for _ in range(3):
+            counter.subtract(counter.keys())
+
+        counter += Counter()
+
+        one_hot_of_known_words = torch.zeros(self.vocab_size, dtype=torch.float).scatter_(0, torch.tensor(list(counter.keys()), dtype=torch.long), 1)
+
+        logger.info('The new vocabulary has size {}.'.format(len(counter)))
+
+        setattr(self, 'one_hot_of_known_words', one_hot_of_known_words)
+
+    def forward(self, input_ids, attention_mask, token_type_ids, classification_labels):
+
+        # input ids is [batch size, 4, seq length]
+        # batch_size = input_ids.shape[0]
+
+        # input ids is [4*batch size, seq length]
+        input_ids = input_ids.view(-1, input_ids.shape[-1])
+
+        # embedded_ids is [4*batch size, seq length, embedding dim]
+        embbeded_ids = self.embedding(input_ids)
+
+        _, (hidden, cell) = self.encoder(embbeded_ids)
+
+        # initial decoder input is [4*batch size, 1]
+        decoder_input = input_ids[:, 0].unsqueeze(-1)
+
+        output_prediction_scores = None
+
+        for t in range(1, input_ids.shape[-1]):
+            # embedded_input is [4*batch size, t, embedding dim]
+            embedded_input = self.embedding(decoder_input)
+
+            # decoder output is [4*batch size, 1, hidden dim]
+            decoder_output, (hidden, cell) = self.decoder(embedded_input, (hidden, cell))
+
+            # decoder output is [4*batch size, hidden dim]
+            decoder_output = decoder_output[:, -1, :]
+
+            # classifier states is [4*batch size, classifier layer size]
+            classifier_states = self.classification_layer(classification_labels.view(-1, 1))
+
+            # classifier states is [batch size, 4, classifier layer size]
+            # classifier_states = classifier_states.view(-1, 4, classifier_states.shape[-1])
+
+            # decoder classifier is [4*batch size, hidden dim + classifier layer size]
+            decoder_classifier_output = torch.cat((decoder_output, classifier_states), dim=-1)
+
+            # decoder prediction is [4*batch size, vocab size]
+            decoder_prediction = self.fully_connected(decoder_classifier_output)
+
+            # decoder prediction is [4*batch size, 1, vocab size]
+            decoder_prediction = decoder_prediction.unsqueeze(1)
+
+            # output predictions is [4*batch size, t, vocab size]
+            if output_prediction_scores is None:
+                output_prediction_scores = decoder_prediction
+            else:
+                output_prediction_scores = torch.cat((output_prediction_scores, decoder_prediction), dim=1)
+
+            # next inputs is [4*batch size]
+            next_inputs = torch.where(input_ids[:, t] == self.mask_id, torch.argmax(decoder_prediction.squeeze(), dim=-1), input_ids[:, t])
+
+            # decoder input is [4*batch size, t+1]
+            decoder_input = torch.cat((decoder_input, next_inputs.unsqueeze(-1)), dim=-1)
+
+        # output prediction scores is [batch size, 4, seq length-1, vocab size]
+        output_prediction_scores = output_prediction_scores.view(-1, 4, *output_prediction_scores.shape[1:])
+
+        # output prediction scores is [batch size, 4, seq length, vocab size]
+        output_prediction_scores = torch.cat((torch.zeros_like(output_prediction_scores[..., 0, :]).unsqueeze(-2), output_prediction_scores), dim=-2)
+
+        if self.one_hot_of_known_words is not None:
+            output_prediction_scores_cpu = output_prediction_scores.cpu()
+            output_prediction_scores_cpu = torch.where(self.one_hot_of_known_words.expand_as(output_prediction_scores_cpu) == 1,
+                                                   output_prediction_scores_cpu, torch.ones_like(output_prediction_scores_cpu) * (-2)**31)
+            output_prediction_scores = output_prediction_scores_cpu.to(input_ids.device)
+            # self.one_hot_of_known_words = self.one_hot_of_known_words.to(output_prediction_scores.device)
+            # output_prediction_scores = torch.where(self.one_hot_of_known_words.expand_as(output_prediction_scores) == 1,
+            #                                        output_prediction_scores, torch.ones_like(output_prediction_scores) * (-2)**31)
+
+        # log softmax of scores
+        output_prediction_scores = self.log_softmax(output_prediction_scores)
+
+        return output_prediction_scores
+
 
 class GeneratorConfig(PretrainedConfig):
 
@@ -373,25 +534,49 @@ class GeneratorReinforcement(nn.Module):
     def __init__(self, model):
         super(GeneratorReinforcement, self).__init__()
 
+        assert hasattr(self, 'classification_layer_size')
+        assert hasattr(self, 'temperature')
+        assert hasattr(self, 'is_oracleM')
+
         self.log_softmax = nn.LogSoftmax(dim=-1)
         self.model = model
 
-        vocab_size = self.model.config.vocab_size
-        self.correct_elementwise = ElementwiseMultiplication(vocab_size, bias=False)
-        self.incorrect_elementwise = ElementwiseMultiplication(vocab_size, bias=False)
+        self.vocab_size = self.model.config.vocab_size
+        hidden_size = self.model.config.hidden_size
+        self.classification_layer = nn.Linear(1, self.classification_layer_size, bias=True)
+        self.decoder = nn.Sequential()
+        self.decoder.add_module('linear1', nn.Linear(hidden_size + self.classification_layer_size, hidden_size + self.classification_layer_size))
+        self.decoder.add_module('relu', nn.ReLU())
+        self.decoder.add_module('norm', nn.LayerNorm(hidden_size + self.classification_layer_size))
+        self.decoder.add_module('linear2', nn.Linear(hidden_size + self.classification_layer_size, self.vocab_size))
 
-        self.temperature = 1.
+        self.one_hot_of_known_words = None
 
-        # self.reset_weights()
+    def set_known_words_masking(self, input_ids):
+        counter = Counter(input_ids.view(-1).cpu().numpy())
+        for _ in range(3):
+            counter.subtract(counter.keys())
 
-    def reset_weights(self):
-        if hasattr(self, 'correct_elementwise'):
-            self.correct_elementwise.reset_parameters()
-        if hasattr(self, 'incorrect_elementwise'):
-            self.incorrect_elementwise.reset_parameters()
+        counter += Counter()
+
+        one_hot_of_known_words = torch.zeros(self.vocab_size, dtype=torch.float).scatter_(0, torch.tensor(list(counter.keys()), dtype=torch.long), 1)
+
+        logger.info('The new vocabulary has size {}.'.format(len(counter)))
+
+        setattr(self, 'one_hot_of_known_words', one_hot_of_known_words)
 
     def save_pretrained(self, save_directory):
+        assert os.path.isdir(
+            save_directory
+        ), "Saving path should be a directory where the model and configuration can be saved"
+
         self.model.save_pretrained(save_directory)
+
+        model_to_save = self
+
+        # If we save using the predefined names, we can load using `from_pretrained`
+        output_model_file = os.path.join(save_directory, 'model_weights.pt')
+        torch.save(model_to_save.state_dict(), output_model_file)
 
     def forward(self, input_ids, attention_mask, token_type_ids, classification_labels):
         if hasattr(self.model, 'roberta'):
@@ -399,13 +584,14 @@ class GeneratorReinforcement(nn.Module):
         elif hasattr(self.model, 'albert'):
             pass
         elif hasattr(self.model, 'bert'):
-            idx = 1
-            input_ids_to_select = torch.tensor([[1], [2]], dtype=torch.long).to(classification_labels.device)
-            input_ids_to_insert = torch.index_select(input=input_ids_to_select, dim=0, index=classification_labels.long().view(-1)).view(*classification_labels.shape, input_ids_to_select.shape[1])
-            input_ids = torch.cat((input_ids[..., :idx], input_ids_to_insert, input_ids[..., idx:]), dim=-1)
-
-            token_type_ids = torch.cat((token_type_ids[..., :idx], torch.zeros_like(input_ids_to_insert), token_type_ids[..., idx:]), dim=-1)
-            attention_mask = torch.cat((attention_mask[..., :idx], torch.ones_like(input_ids_to_insert), attention_mask[..., idx:]), dim=-1)
+            pass
+            # idx = 1
+            # input_ids_to_select = torch.tensor([[1], [2]], dtype=torch.long).to(classification_labels.device)
+            # input_ids_to_insert = torch.index_select(input=input_ids_to_select, dim=0, index=classification_labels.long().view(-1)).view(*classification_labels.shape, input_ids_to_select.shape[1])
+            # input_ids = torch.cat((input_ids[..., :idx], input_ids_to_insert, input_ids[..., idx:]), dim=-1)
+            #
+            # token_type_ids = torch.cat((token_type_ids[..., :idx], torch.zeros_like(input_ids_to_insert), token_type_ids[..., idx:]), dim=-1)
+            # attention_mask = torch.cat((attention_mask[..., :idx], torch.ones_like(input_ids_to_insert), attention_mask[..., idx:]), dim=-1)
 
         else:
             raise NotImplementedError
@@ -413,8 +599,6 @@ class GeneratorReinforcement(nn.Module):
         # change from dimension [batch size, 4, max length] to [4*batch size, max length]
         temp_input_ids = input_ids.view(-1, input_ids.shape[-1])
         temp_attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
-
-        # TODO can also experiment with putting a 1/2 there rather than a one hot
 
         assert temp_input_ids.dtype == torch.long
         # outputs dimension [4*batch size, max length, vocab size] of before softmax scores for each word
@@ -424,20 +608,22 @@ class GeneratorReinforcement(nn.Module):
 
         prediction_scores = model_outputs[0]
 
-        if hasattr(self.model, 'bert'):
-            prediction_scores = torch.cat((prediction_scores[:, :idx, :], prediction_scores[:, idx+(prediction_scores.shape[1] - 256):, :]), dim=1)
+        if not self.is_oracleM:
+            hidden_states = model_outputs[1][-1]
+
+            classifier_states = self.classification_layer(classification_labels.view(-1, 1))
+            classifier_states = torch.cat([classifier_states.unsqueeze(1)] * hidden_states.shape[1], dim=1)
+
+            hidden_states = torch.cat((hidden_states, classifier_states), dim=-1)
+
+            prediction_scores = self.decoder(hidden_states)
+
+        if self.one_hot_of_known_words is not None:
+            self.one_hot_of_known_words = self.one_hot_of_known_words.to(prediction_scores.device)
+            # prediction_scores *= (((-2 ** 31) * (1 - self.one_hot_of_known_words.view(1, 1, -1))) + self.one_hot_of_known_words.view(1, 1, -1))
+            prediction_scores = torch.where(self.one_hot_of_known_words.expand_as(prediction_scores) == 1, prediction_scores, torch.ones_like(prediction_scores) * (-2)**31)
 
         prediction_scores = prediction_scores.view(-1, 4, *prediction_scores.shape[1:])
-
-        argmax1 = torch.argmax(prediction_scores, dim=-1)
-        vals1 = prediction_scores.gather(dim=3, index=argmax1.unsqueeze(-1))
-
-        # prediction_scores = classification_labels.view(*classification_labels.shape, 1, 1) * self.correct_elementwise(prediction_scores) + \
-        #                 (1 - classification_labels).view(*classification_labels.shape, 1, 1) * self.incorrect_elementwise(prediction_scores)
-
-        argmax2 = torch.argmax(prediction_scores, dim=-1)
-        vals2 = prediction_scores.gather(dim=3, index=argmax2.unsqueeze(-1))
-        new_vals1 = prediction_scores.gather(dim=3, index=argmax1.unsqueeze(-1))
 
         temperature = 1. if not self.training else self.temperature
         prediction_scores = self.log_softmax(prediction_scores / temperature)
@@ -447,26 +633,45 @@ class GeneratorReinforcement(nn.Module):
 
 class MyRobertaForMaskedLMReinforcement(GeneratorReinforcement):
     def __init__(self, pretrained_model_name_or_path, config):
+
+        for k, v in config.task_specific_params.items():
+            setattr(self, k, v)
+
         super(MyRobertaForMaskedLMReinforcement, self).__init__(model=RobertaForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
-        return cls(pretrained_model_name_or_path, config)
+        model_to_return = cls(pretrained_model_name_or_path, config)
+        if pretrained_model_name_or_path is not None and os.path.exists(os.path.join(pretrained_model_name_or_path, 'model_weights.pt')):
+            model_load_filename = os.path.join(pretrained_model_name_or_path, 'model_weights.pt')
+            model_to_return.load_state_dict(torch.load(model_load_filename))
+
+        return model_to_return
+
 
 class MyBertForMaskedLMReinforcement(GeneratorReinforcement):
     def __init__(self, pretrained_model_name_or_path, config):
+
+        for k, v in config.task_specific_params.items():
+            setattr(self, k, v)
+
         super(MyBertForMaskedLMReinforcement, self).__init__(model=BertForMaskedLM.from_pretrained(pretrained_model_name_or_path, config=config))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, config):
-        return cls(pretrained_model_name_or_path, config)
+        model_to_return = cls(pretrained_model_name_or_path, config)
+        if pretrained_model_name_or_path is not None and os.path.exists(os.path.join(pretrained_model_name_or_path, 'model_weights.pt')):
+            model_load_filename = os.path.join(pretrained_model_name_or_path, 'model_weights.pt')
+            model_to_return.load_state_dict(torch.load(model_load_filename))
 
+        return model_to_return
 
 generator_models_and_config_classes = {
     'seq': (GeneratorConfig, Seq2Seq),
     'roberta': (RobertaConfig, MyRobertaForMaskedLM),
     'albert': (AlbertConfig, MyAlbertForMaskedLM),
     'roberta-reinforce': (RobertaConfig, MyRobertaForMaskedLMReinforcement),
-    'bert-reinforce': (BertConfig, MyBertForMaskedLMReinforcement)
+    'bert-reinforce': (BertConfig, MyBertForMaskedLMReinforcement),
+    'seq-reinforce': (GeneratorConfig, Seq2SeqReinforce),
 }
 
