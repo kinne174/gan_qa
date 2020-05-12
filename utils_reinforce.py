@@ -23,7 +23,6 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
     # draw fake probability for words
 
     fake_vocabulary_logprobs = generatorM(input_ids, attention_mask, token_type_ids, classification_labels)
-    # fake_vocabulary_probs = fake_vocabulary_probs.view(-1, fake_vocabulary_probs.shape[2], fake_vocabulary_probs.shape[3])
 
     all_log_probs = []
     all_fake_input_ids = []
@@ -44,14 +43,17 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
     log_probs = torch.cat(all_log_probs, dim=0)
     fake_input_ids = torch.cat(all_fake_input_ids, dim=0)
     fake_action = torch.cat(all_fake_action, dim=0)
-    attention_mask = torch.cat([attention_mask]*args.generator_resampling_steps, dim=0)
-    token_type_ids = torch.cat([token_type_ids]*args.generator_resampling_steps, dim=0)
+    attention_mask_ex = torch.cat([attention_mask]*args.generator_resampling_steps, dim=0)
+    token_type_ids_ex = torch.cat([token_type_ids]*args.generator_resampling_steps, dim=0)
     classification_labels = torch.cat([classification_labels]*args.generator_resampling_steps, dim=0)
 
     with torch.no_grad():
         # score words with discriminator and classifier
         logits_discriminator = discriminatorM(fake_input_ids)
-        logits_classifier = classifierM(fake_input_ids, attention_mask, token_type_ids)
+        logits_fake_classifier = classifierM(fake_input_ids, attention_mask_ex, token_type_ids_ex)
+        # logits_real_classifier = classifierM(input_ids, attention_mask, token_type_ids)
+
+    # logits_real_classifier = torch.cat(([logits_real_classifier] * args.generator_resampling_steps), dim=0)
 
     m_ = (args.rewards_start - args.rewards_stop) / (args.optimization_steps * (2*args.rewards_squeeze - 1))
     b_ = (args.rewards_squeeze * (args.rewards_stop + args.rewards_start) - args.rewards_start) / (2 * args.rewards_squeeze - 1)
@@ -61,11 +63,13 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
     rd_mean = torch.mean(rewards_discriminator)
     rd_std = torch.std(rewards_discriminator)
 
-    rewards_classifier = 2. * softmax(logits_classifier)[classification_labels.nonzero(as_tuple=True)] - 1.
+    rewards_classifier = 2. * softmax(logits_fake_classifier)[classification_labels.nonzero(as_tuple=True)] - 1.
+    # rewards_classifier = ((-1) ** args.rewards_classifier_negative_one) * torch.sum((sigmoid(logits_real_classifier) - sigmoid(logits_fake_classifier)) * (-3. * classification_labels + (1. - classification_labels)), dim=-1) / 3
     rc_mean = torch.mean(rewards_classifier)
     rc_std = torch.std(rewards_classifier)
 
-    rewards_classifier = ((rewards_classifier - rc_mean) / rc_std) * rd_std + rd_mean
+    rewards_classifier = ((rewards_classifier - rc_mean) / (rc_std + 1.e-6)) + rc_mean
+    rewards_discriminator = ((rewards_discriminator - rd_mean) / (rd_std + 1.e-6)) + rd_mean
 
     rewards_discriminator *= (2 - rewards_decay)
     rewards_classifier *= rewards_decay
@@ -86,7 +90,7 @@ def train_generator(args, input_ids, attention_mask, my_attention_mask, token_ty
     a = torch.arange(random_ind, random_ind+batch_size)
     fake_input_ids = fake_input_ids[a, ...]
     logits_discriminator = logits_discriminator[a, ...]
-    logits_classifier = logits_classifier[a, ...]
+    logits_classifier = logits_fake_classifier[a, ...]
 
     return loss, fake_input_ids, (logits_discriminator, logits_classifier)
 
@@ -192,10 +196,14 @@ def discount_rewards(args, baseline, log_vocab_probs, action, my_attention_mask,
     attention_mask_rewards = rewards[my_attention_mask.nonzero(as_tuple=True)]
 
     rewards_gamma = torch.empty_like(rewards).to(args.device)
-    for j in range(rewards_gamma.shape[-1]):
-        if j is not 0:
-            gamma_tensor = torch.cat((gamma_tensor[0].unsqueeze(0) * gamma, gamma_tensor[:-1]))
-        rewards_gamma[:, j] = torch.sum(gamma_tensor.unsqueeze(0) * rewards, dim=1)
+    if not args.forward_reward:
+        for j in range(rewards_gamma.shape[-1]):
+            if j is not 0:
+                gamma_tensor = torch.cat((gamma_tensor[0].unsqueeze(0) * gamma, gamma_tensor[:-1]))
+            rewards_gamma[:, j] = torch.sum(gamma_tensor.unsqueeze(0) * rewards, dim=1)
+    else:
+        for j in range(rewards_gamma.shape[-1]):
+            rewards_gamma[:, j] = torch.sum(gamma_tensor[:len(gamma_tensor)-j].unsqueeze(0) * rewards[:, j:], dim=1)
 
     attention_mask_gamma = rewards_gamma[my_attention_mask.nonzero(as_tuple=True)]
 
@@ -228,13 +236,13 @@ def discount_rewards(args, baseline, log_vocab_probs, action, my_attention_mask,
     baseline['prev'] = new_baseline
 
     if torch.any(torch.isnan(baseline['total_mean_rewards'])):
-        print('hi')
+        logger.warning('There is an NaN introduced!')
         return None
 
     return loss
 
 
-def Wloss(preds, labels, my_attention_mask, use_tanh=False):
+def Wloss(preds, labels, my_attention_mask, use_tanh=True):
 
     if use_tanh:
         tanh = nn.Tanh()
